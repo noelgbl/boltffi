@@ -39,3 +39,24 @@ impl<'a, T> From<&'a [T]> for FfiSlice<'a, T> {
         Self::from_slice(data)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slice_roundtrip() {
+        let data = [1u32, 2, 3, 4, 5];
+        let ffi_slice = FfiSlice::from_slice(&data);
+        assert_eq!(ffi_slice.len(), 5);
+        assert_eq!(ffi_slice.as_slice(), &data);
+    }
+
+    #[test]
+    fn empty_slice() {
+        let data: [u32; 0] = [];
+        let ffi_slice = FfiSlice::from_slice(&data);
+        assert!(ffi_slice.is_empty());
+        assert_eq!(ffi_slice.as_slice(), &data);
+    }
+}
