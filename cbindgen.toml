@@ -1,14 +1,12 @@
 language = "C"
+include_guard = "MOBIFFI_CORE_H"
 
 [export]
 include = []
 exclude = []
 
-[fn]
-prefix = "AL"
-
 [struct]
 rename_fields = "CamelCase"
 
 [enum]
-rename_variants = "QualifiedScreamingSnakeCase"
+rename_variants = "ScreamingSnakeCase"
