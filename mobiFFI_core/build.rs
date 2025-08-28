@@ -32,11 +32,18 @@ fn main() {
     println!("cargo:rerun-if-changed=../cbindgen.toml");
 }
 
+enum FfiReturnKind {
+    Unit,
+    Primitive(String),
+    String,
+    ResultPrimitive(String),
+    ResultString,
+}
+
 struct FfiExport {
     name: String,
     params: Vec<(String, String)>,
-    return_type: Option<String>,
-    returns_string: bool,
+    return_kind: FfiReturnKind,
 }
 
 fn collect_ffi_exports(src_dir: &PathBuf) -> Vec<FfiExport> {
@@ -77,9 +84,39 @@ fn has_ffi_export_attr(func: &ItemFn) -> bool {
         .any(|attr| attr.path().is_ident("ffi_export"))
 }
 
-fn is_string_type(ty: &Type) -> bool {
+fn classify_return_type(ty: &Type) -> FfiReturnKind {
     let type_str = quote::quote!(#ty).to_string().replace(" ", "");
-    type_str == "String" || type_str == "std::string::String"
+
+    if type_str == "String" || type_str == "std::string::String" {
+        return FfiReturnKind::String;
+    }
+
+    if type_str == "()" {
+        return FfiReturnKind::Unit;
+    }
+
+    if let Type::Path(path) = ty {
+        if let Some(segment) = path.path.segments.last() {
+            if segment.ident == "Result" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        let inner_str = quote::quote!(#inner_ty).to_string().replace(" ", "");
+                        if inner_str == "String" || inner_str == "std::string::String" {
+                            return FfiReturnKind::ResultString;
+                        } else if inner_str == "()" {
+                            return FfiReturnKind::Unit;
+                        } else if let Some(c_type) = rust_type_to_c(inner_ty) {
+                            return FfiReturnKind::ResultPrimitive(c_type);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    rust_type_to_c(ty)
+        .map(FfiReturnKind::Primitive)
+        .unwrap_or(FfiReturnKind::Unit)
 }
 
 fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
@@ -103,22 +140,15 @@ fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
         })
         .collect();
 
-    let (return_type, returns_string) = match &func.sig.output {
-        ReturnType::Default => (None, false),
-        ReturnType::Type(_, ty) => {
-            if is_string_type(ty) {
-                (Some("struct FfiStatus".to_string()), true)
-            } else {
-                (rust_type_to_c(ty), false)
-            }
-        }
+    let return_kind = match &func.sig.output {
+        ReturnType::Default => FfiReturnKind::Unit,
+        ReturnType::Type(_, ty) => classify_return_type(ty),
     };
 
     Some(FfiExport {
         name,
         params,
-        returns_string,
-        return_type,
+        return_kind,
     })
 }
 
@@ -181,9 +211,20 @@ fn append_macro_exports(header_path: &PathBuf, exports: &[FfiExport]) {
                     .map(|(name, ty)| format!("{} {}", ty, name))
                     .collect();
 
-                if e.returns_string {
-                    params.push("struct FfiString *out".to_string());
-                }
+                let ret_type = match &e.return_kind {
+                    FfiReturnKind::Unit => {
+                        "struct FfiStatus".to_string()
+                    }
+                    FfiReturnKind::Primitive(ty) => ty.clone(),
+                    FfiReturnKind::String | FfiReturnKind::ResultString => {
+                        params.push("struct FfiString *out".to_string());
+                        "struct FfiStatus".to_string()
+                    }
+                    FfiReturnKind::ResultPrimitive(ty) => {
+                        params.push(format!("{} *out", ty));
+                        "struct FfiStatus".to_string()
+                    }
+                };
 
                 let params_str = if params.is_empty() {
                     "void".to_string()
@@ -191,8 +232,7 @@ fn append_macro_exports(header_path: &PathBuf, exports: &[FfiExport]) {
                     params.join(", ")
                 };
 
-                let ret = e.return_type.as_deref().unwrap_or("void");
-                format!("{} mffi_{}({});\n", ret, e.name, params_str)
+                format!("{} mffi_{}({});\n", ret_type, e.name, params_str)
             })
             .collect();
 

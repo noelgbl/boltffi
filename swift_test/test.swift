@@ -338,4 +338,42 @@ if greetingStatus.code == 0 {
     exit(1)
 }
 
+print("\n--- Testing macro Result return ---")
+
+var divResult: Int32 = 0
+let divStatus = mffi_safe_divide(10, 3, &divResult)
+print("mffi_safe_divide(10, 3) = \(divResult), status = \(divStatus.code)")
+
+if divStatus.code == 0 && divResult == 3 {
+    print("SUCCESS: Result<i32> OK path works!")
+} else {
+    print("FAILED: Expected 3, got \(divResult)")
+    exit(1)
+}
+
+var divByZeroResult: Int32 = 0
+let divByZeroStatus = mffi_safe_divide(10, 0, &divByZeroResult)
+print("mffi_safe_divide(10, 0) status = \(divByZeroStatus.code)")
+
+if divByZeroStatus.code != 0 {
+    var errOut = FfiString()
+    let errStatus = mffi_last_error_message(&errOut)
+    if errStatus.code == 0 && errOut.ptr != nil {
+        let errStr = String(cString: errOut.ptr)
+        print("Error message: \(errStr)")
+        mffi_free_string(errOut)
+        if errStr.contains("division by zero") {
+            print("SUCCESS: Result<i32> Err path works!")
+        } else {
+            print("FAILED: Wrong error message '\(errStr)'")
+            exit(1)
+        }
+    } else {
+        print("WARNING: No error message but status indicated error")
+    }
+} else {
+    print("FAILED: Division by zero should have failed")
+    exit(1)
+}
+
 print("\n=== ALL TESTS PASSED ===")

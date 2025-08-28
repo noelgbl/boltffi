@@ -332,3 +332,12 @@ pub fn make_greeting(name_ptr: *const u8, name_len: usize) -> String {
     };
     format!("Hello, {}!", name)
 }
+
+#[ffi_export]
+pub fn safe_divide(numerator: i32, denominator: i32) -> Result<i32, &'static str> {
+    if denominator == 0 {
+        Err("division by zero")
+    } else {
+        Ok(numerator / denominator)
+    }
+}

@@ -39,20 +39,45 @@ fn extract_arg_idents(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]
         .collect()
 }
 
-fn is_string_return(output: &ReturnType) -> bool {
-    match output {
-        ReturnType::Default => false,
-        ReturnType::Type(_, ty) => {
-            let type_str = quote::quote!(#ty).to_string();
-            type_str == "String" || type_str == "std :: string :: String"
-        }
-    }
+enum ReturnKind {
+    Unit,
+    Primitive,
+    String,
+    ResultPrimitive(syn::Type),
+    ResultString,
 }
 
-fn get_return_type(output: &ReturnType) -> Option<&Type> {
+fn classify_return(output: &ReturnType) -> ReturnKind {
     match output {
-        ReturnType::Default => None,
-        ReturnType::Type(_, ty) => Some(ty.as_ref()),
+        ReturnType::Default => ReturnKind::Unit,
+        ReturnType::Type(_, ty) => {
+            let type_str = quote::quote!(#ty).to_string().replace(" ", "");
+
+            if type_str == "String" || type_str == "std::string::String" {
+                return ReturnKind::String;
+            }
+
+            if let Type::Path(path) = ty.as_ref() {
+                if let Some(segment) = path.path.segments.last() {
+                    if segment.ident == "Result" {
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                                let inner_str = quote::quote!(#inner_ty).to_string().replace(" ", "");
+                                if inner_str == "String" || inner_str == "std::string::String" {
+                                    return ReturnKind::ResultString;
+                                } else if inner_str == "()" {
+                                    return ReturnKind::Unit;
+                                } else {
+                                    return ReturnKind::ResultPrimitive(inner_ty.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            ReturnKind::Primitive
+        }
     }
 }
 
@@ -69,30 +94,88 @@ pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let export_name = format!("mffi_{}", fn_name);
     let export_ident = syn::Ident::new(&export_name, fn_name.span());
 
-    let expanded = if is_string_return(fn_output) {
-        quote! {
-            #input
+    let expanded = match classify_return(fn_output) {
+        ReturnKind::String => {
+            quote! {
+                #input
 
-            #[unsafe(no_mangle)]
-            #fn_vis unsafe extern "C" fn #export_ident(
-                #fn_inputs,
-                out: *mut crate::FfiString
-            ) -> crate::FfiStatus {
-                if out.is_null() {
-                    return crate::FfiStatus::NULL_POINTER;
+                #[unsafe(no_mangle)]
+                #fn_vis unsafe extern "C" fn #export_ident(
+                    #fn_inputs,
+                    out: *mut crate::FfiString
+                ) -> crate::FfiStatus {
+                    if out.is_null() {
+                        return crate::FfiStatus::NULL_POINTER;
+                    }
+                    let result = #fn_name(#(#arg_idents),*);
+                    *out = crate::FfiString::from(result);
+                    crate::FfiStatus::OK
                 }
-                let result = #fn_name(#(#arg_idents),*);
-                *out = crate::FfiString::from(result);
-                crate::FfiStatus::OK
             }
         }
-    } else {
-        quote! {
-            #input
+        ReturnKind::ResultString => {
+            quote! {
+                #input
 
-            #[unsafe(no_mangle)]
-            #fn_vis extern "C" fn #export_ident(#fn_inputs) #fn_output {
-                #fn_name(#(#arg_idents),*)
+                #[unsafe(no_mangle)]
+                #fn_vis unsafe extern "C" fn #export_ident(
+                    #fn_inputs,
+                    out: *mut crate::FfiString
+                ) -> crate::FfiStatus {
+                    if out.is_null() {
+                        return crate::FfiStatus::NULL_POINTER;
+                    }
+                    match #fn_name(#(#arg_idents),*) {
+                        Ok(value) => {
+                            *out = crate::FfiString::from(value);
+                            crate::FfiStatus::OK
+                        }
+                        Err(e) => crate::fail_with_error(crate::FfiStatus::INTERNAL_ERROR, &e.to_string())
+                    }
+                }
+            }
+        }
+        ReturnKind::ResultPrimitive(inner_ty) => {
+            quote! {
+                #input
+
+                #[unsafe(no_mangle)]
+                #fn_vis unsafe extern "C" fn #export_ident(
+                    #fn_inputs,
+                    out: *mut #inner_ty
+                ) -> crate::FfiStatus {
+                    if out.is_null() {
+                        return crate::FfiStatus::NULL_POINTER;
+                    }
+                    match #fn_name(#(#arg_idents),*) {
+                        Ok(value) => {
+                            *out = value;
+                            crate::FfiStatus::OK
+                        }
+                        Err(e) => crate::fail_with_error(crate::FfiStatus::INTERNAL_ERROR, &e.to_string())
+                    }
+                }
+            }
+        }
+        ReturnKind::Unit => {
+            quote! {
+                #input
+
+                #[unsafe(no_mangle)]
+                #fn_vis extern "C" fn #export_ident(#fn_inputs) -> crate::FfiStatus {
+                    #fn_name(#(#arg_idents),*);
+                    crate::FfiStatus::OK
+                }
+            }
+        }
+        ReturnKind::Primitive => {
+            quote! {
+                #input
+
+                #[unsafe(no_mangle)]
+                #fn_vis extern "C" fn #export_ident(#fn_inputs) #fn_output {
+                    #fn_name(#(#arg_idents),*)
+                }
             }
         }
     };
