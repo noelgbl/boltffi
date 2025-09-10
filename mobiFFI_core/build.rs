@@ -231,26 +231,34 @@ fn classify_return_type(ty: &Type) -> FfiReturnKind {
         .unwrap_or(FfiReturnKind::Unit)
 }
 
+fn is_string_param(ty: &Type) -> bool {
+    let type_str = quote::quote!(#ty).to_string().replace(" ", "");
+    type_str == "&str" 
+        || (type_str.starts_with("&'") && type_str.ends_with("str"))
+        || type_str == "String"
+        || type_str == "std::string::String"
+}
+
 fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
     let name = func.sig.ident.to_string();
 
-    let params: Vec<(String, String)> = func
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|arg| {
-            if let FnArg::Typed(pat_type) = arg {
-                let param_name = match pat_type.pat.as_ref() {
-                    Pat::Ident(ident) => ident.ident.to_string(),
-                    _ => return None,
-                };
-                let param_type = rust_type_to_c(&pat_type.ty)?;
-                Some((param_name, param_type))
-            } else {
-                None
+    let mut params: Vec<(String, String)> = Vec::new();
+
+    for arg in func.sig.inputs.iter() {
+        if let FnArg::Typed(pat_type) = arg {
+            let param_name = match pat_type.pat.as_ref() {
+                Pat::Ident(ident) => ident.ident.to_string(),
+                _ => continue,
+            };
+
+            if is_string_param(&pat_type.ty) {
+                params.push((format!("{}_ptr", param_name), "const uint8_t*".to_string()));
+                params.push((format!("{}_len", param_name), "uintptr_t".to_string()));
+            } else if let Some(c_type) = rust_type_to_c(&pat_type.ty) {
+                params.push((param_name, c_type));
             }
-        })
-        .collect();
+        }
+    }
 
     let return_kind = match &func.sig.output {
         ReturnType::Default => FfiReturnKind::Unit,

@@ -76,53 +76,14 @@ fn fail_with_error(status: FfiStatus, message: impl Into<String>) -> FfiStatus {
     status
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn mffi_greeting(
-    name_ptr: *const u8,
-    name_len: usize,
-    out: *mut FfiString,
-) -> FfiStatus {
-    if out.is_null() {
-        return fail_with_error(FfiStatus::NULL_POINTER, "output pointer is null");
-    }
-
-    let name = match read_input_str(name_ptr, name_len) {
-        Some(name) => name,
-        None => return fail_with_error(FfiStatus::INVALID_ARG, "name is not valid UTF-8"),
-    };
-
-    let greeting = format!("Hello, {}!", name);
-    *out = FfiString::from(greeting);
-
-    FfiStatus::OK
+#[ffi_export]
+pub fn greeting(name: &str) -> String {
+    format!("Hello, {}!", name)
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn mffi_concat(
-    first_ptr: *const u8,
-    first_len: usize,
-    second_ptr: *const u8,
-    second_len: usize,
-    out: *mut FfiString,
-) -> FfiStatus {
-    if out.is_null() {
-        return fail_with_error(FfiStatus::NULL_POINTER, "output pointer is null");
-    }
-
-    let first = match read_input_str(first_ptr, first_len) {
-        Some(string) => string,
-        None => return fail_with_error(FfiStatus::INVALID_ARG, "first string is not valid UTF-8"),
-    };
-
-    let second = match read_input_str(second_ptr, second_len) {
-        Some(string) => string,
-        None => return fail_with_error(FfiStatus::INVALID_ARG, "second string is not valid UTF-8"),
-    };
-
-    let result = format!("{}{}", first, second);
-    *out = FfiString::from(result);
-
-    FfiStatus::OK
+#[ffi_export]
+pub fn concat(first: &str, second: &str) -> String {
+    format!("{}{}", first, second)
 }
 
 #[unsafe(no_mangle)]
@@ -301,15 +262,7 @@ pub fn multiply_floats(first: f64, second: f64) -> f64 {
 }
 
 #[ffi_export]
-pub fn make_greeting(name_ptr: *const u8, name_len: usize) -> String {
-    let name = unsafe {
-        if name_ptr.is_null() {
-            "World"
-        } else {
-            let bytes = core::slice::from_raw_parts(name_ptr, name_len);
-            core::str::from_utf8(bytes).unwrap_or("World")
-        }
-    };
+pub fn make_greeting(name: &str) -> String {
     format!("Hello, {}!", name)
 }
 
