@@ -429,6 +429,30 @@ if seqLen == 5 {
     exit(1)
 }
 
+print("\n--- Testing callback macro ---")
+
+class SumCollector {
+    var sum: Int32 = 0
+}
+
+let collector = SumCollector()
+let collectorPtr = Unmanaged.passUnretained(collector).toOpaque()
+
+let foreachCallback: @convention(c) (UnsafeMutableRawPointer?, Int32) -> Void = { userData, value in
+    let collector = Unmanaged<SumCollector>.fromOpaque(userData!).takeUnretainedValue()
+    collector.sum += value
+}
+
+let foreachStatus = mffi_foreach_range(0, 5, foreachCallback, collectorPtr)
+print("foreach_range(0, 5) sum = \(collector.sum), status = \(foreachStatus.code)")
+
+if collector.sum == 10 && foreachStatus.code == 0 {
+    print("SUCCESS: Callback macro works!")
+} else {
+    print("FAILED: Expected sum 10, got \(collector.sum)")
+    exit(1)
+}
+
 print("\n--- Testing ffi_class macro ---")
 
 let acc = mffi_accumulator_new()!

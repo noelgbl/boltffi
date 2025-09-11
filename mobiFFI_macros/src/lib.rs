@@ -42,20 +42,64 @@ fn classify_param(pat_type: &syn::PatType) -> ParamKind {
     }
 }
 
-enum StringParamKind {
-    None,
+enum ParamTransform {
+    PassThrough,
     StrRef,
     OwnedString,
+    Callback(Vec<syn::Type>),
 }
 
-fn classify_string_param(ty: &Type) -> StringParamKind {
+fn extract_fn_arg_types(ty: &Type) -> Option<Vec<syn::Type>> {
+    if let Type::BareFn(bare_fn) = ty {
+        let args: Vec<syn::Type> = bare_fn
+            .inputs
+            .iter()
+            .map(|arg| arg.ty.clone())
+            .collect();
+        return Some(args);
+    }
+    
+    if let Type::ImplTrait(impl_trait) = ty {
+        for bound in &impl_trait.bounds {
+            if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                let path = &trait_bound.path;
+                if let Some(segment) = path.segments.last() {
+                    let ident = segment.ident.to_string();
+                    if ident == "Fn" || ident == "FnMut" || ident == "FnOnce" {
+                        if let syn::PathArguments::Parenthesized(args) = &segment.arguments {
+                            let arg_types: Vec<syn::Type> = args.inputs.iter().cloned().collect();
+                            return Some(arg_types);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+fn classify_param_transform(ty: &Type) -> ParamTransform {
     let type_str = quote::quote!(#ty).to_string().replace(" ", "");
+    
+    if let Some(arg_types) = extract_fn_arg_types(ty) {
+        return ParamTransform::Callback(arg_types);
+    }
+    
+    if type_str.starts_with("*const") || type_str.starts_with("*mut") {
+        return ParamTransform::PassThrough;
+    }
+    
+    if type_str.contains("extern") && type_str.contains("fn(") {
+        return ParamTransform::PassThrough;
+    }
+    
     if type_str == "&str" || (type_str.starts_with("&'") && type_str.ends_with("str")) {
-        StringParamKind::StrRef
+        ParamTransform::StrRef
     } else if type_str == "String" || type_str == "std::string::String" {
-        StringParamKind::OwnedString
+        ParamTransform::OwnedString
     } else {
-        StringParamKind::None
+        ParamTransform::PassThrough
     }
 }
 
@@ -77,8 +121,8 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
                 _ => continue,
             };
 
-            match classify_string_param(&pat_type.ty) {
-                StringParamKind::StrRef => {
+            match classify_param_transform(&pat_type.ty) {
+                ParamTransform::StrRef => {
                     let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
                     let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
 
@@ -101,7 +145,7 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
 
                     call_args.push(quote! { #name });
                 }
-                StringParamKind::OwnedString => {
+                ParamTransform::OwnedString => {
                     let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
                     let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
 
@@ -124,7 +168,28 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
 
                     call_args.push(quote! { #name });
                 }
-                StringParamKind::None => {
+                ParamTransform::Callback(arg_types) => {
+                    let cb_name = syn::Ident::new(&format!("{}_cb", name), name.span());
+                    let ud_name = syn::Ident::new(&format!("{}_ud", name), name.span());
+                    
+                    ffi_params.push(quote! { #cb_name: extern "C" fn(*mut core::ffi::c_void, #(#arg_types),*) });
+                    ffi_params.push(quote! { #ud_name: *mut core::ffi::c_void });
+                    
+                    let arg_names: Vec<syn::Ident> = arg_types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| syn::Ident::new(&format!("__arg{}", i), name.span()))
+                        .collect();
+                    
+                    conversions.push(quote! {
+                        let #name = |#(#arg_names: #arg_types),*| {
+                            #cb_name(#ud_name, #(#arg_names),*)
+                        };
+                    });
+                    
+                    call_args.push(quote! { #name });
+                }
+                ParamTransform::PassThrough => {
                     let ty = &pat_type.ty;
                     ffi_params.push(quote! { #name: #ty });
                     call_args.push(quote! { #name });
@@ -618,6 +683,100 @@ pub fn ffi_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+fn transform_method_params(
+    inputs: impl Iterator<Item = syn::FnArg>,
+) -> FfiParams {
+    let mut ffi_params = Vec::new();
+    let mut conversions = Vec::new();
+    let mut call_args = Vec::new();
+
+    for arg in inputs {
+        if let FnArg::Typed(pat_type) = arg {
+            let name = match pat_type.pat.as_ref() {
+                Pat::Ident(ident) => ident.ident.clone(),
+                _ => continue,
+            };
+
+            match classify_param_transform(&pat_type.ty) {
+                ParamTransform::StrRef => {
+                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
+                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+
+                    ffi_params.push(quote! { #ptr_name: *const u8 });
+                    ffi_params.push(quote! { #len_name: usize });
+
+                    conversions.push(quote! {
+                        let #name: &str = if #ptr_name.is_null() {
+                            ""
+                        } else {
+                            match core::str::from_utf8(core::slice::from_raw_parts(#ptr_name, #len_name)) {
+                                Ok(s) => s,
+                                Err(_) => return crate::fail_with_error(
+                                    crate::FfiStatus::INVALID_ARG,
+                                    concat!(stringify!(#name), " is not valid UTF-8")
+                                ),
+                            }
+                        };
+                    });
+
+                    call_args.push(quote! { #name });
+                }
+                ParamTransform::OwnedString => {
+                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
+                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+
+                    ffi_params.push(quote! { #ptr_name: *const u8 });
+                    ffi_params.push(quote! { #len_name: usize });
+
+                    conversions.push(quote! {
+                        let #name: String = if #ptr_name.is_null() {
+                            String::new()
+                        } else {
+                            match core::str::from_utf8(core::slice::from_raw_parts(#ptr_name, #len_name)) {
+                                Ok(s) => s.to_string(),
+                                Err(_) => return crate::fail_with_error(
+                                    crate::FfiStatus::INVALID_ARG,
+                                    concat!(stringify!(#name), " is not valid UTF-8")
+                                ),
+                            }
+                        };
+                    });
+
+                    call_args.push(quote! { #name });
+                }
+                ParamTransform::Callback(arg_types) => {
+                    let cb_name = syn::Ident::new(&format!("{}_cb", name), name.span());
+                    let ud_name = syn::Ident::new(&format!("{}_ud", name), name.span());
+                    
+                    ffi_params.push(quote! { #cb_name: extern "C" fn(*mut core::ffi::c_void, #(#arg_types),*) });
+                    ffi_params.push(quote! { #ud_name: *mut core::ffi::c_void });
+                    
+                    let arg_names: Vec<syn::Ident> = arg_types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| syn::Ident::new(&format!("__arg{}", i), name.span()))
+                        .collect();
+                    
+                    conversions.push(quote! {
+                        let #name = |#(#arg_names: #arg_types),*| {
+                            #cb_name(#ud_name, #(#arg_names),*)
+                        };
+                    });
+                    
+                    call_args.push(quote! { #name });
+                }
+                ParamTransform::PassThrough => {
+                    let ty = &pat_type.ty;
+                    ffi_params.push(quote! { #name: #ty });
+                    call_args.push(quote! { #name });
+                }
+            }
+        }
+    }
+
+    FfiParams { ffi_params, conversions, call_args }
+}
+
 fn generate_method_export(
     type_name: &syn::Ident,
     snake_name: &str,
@@ -640,42 +799,41 @@ fn generate_method_export(
         return None;
     }
 
-    let other_args: Vec<_> = method
-        .sig
-        .inputs
-        .iter()
-        .skip(1)
-        .filter_map(|arg| {
-            if let FnArg::Typed(pat_type) = arg {
-                Some(pat_type)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let arg_idents: Vec<_> = other_args
-        .iter()
-        .filter_map(|pt| {
-            if let Pat::Ident(ident) = pt.pat.as_ref() {
-                Some(&ident.ident)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let other_inputs = method.sig.inputs.iter().skip(1).cloned();
+    let FfiParams { ffi_params, conversions, call_args } = transform_method_params(other_inputs);
 
     let fn_output = &method.sig.output;
+    let has_conversions = !conversions.is_empty();
 
-    let call_expr = quote! { (*handle).#method_name(#(#arg_idents),*) };
+    let call_expr = quote! { (*handle).#method_name(#(#call_args),*) };
 
-    Some(quote! {
-        #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn #export_name(
-            handle: *mut #type_name,
-            #(#other_args),*
-        ) #fn_output {
+    let body = if has_conversions {
+        quote! {
+            #(#conversions)*
             #call_expr
         }
-    })
+    } else {
+        call_expr
+    };
+
+    if ffi_params.is_empty() {
+        Some(quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_name(
+                handle: *mut #type_name
+            ) #fn_output {
+                #body
+            }
+        })
+    } else {
+        Some(quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_name(
+                handle: *mut #type_name,
+                #(#ffi_params),*
+            ) #fn_output {
+                #body
+            }
+        })
+    }
 }

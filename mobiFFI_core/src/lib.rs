@@ -285,6 +285,11 @@ pub fn generate_sequence(count: i32) -> Vec<i32> {
     (0..count).collect()
 }
 
+#[ffi_export]
+pub fn foreach_range(start: i32, end: i32, mut callback: impl FnMut(i32)) {
+    (start..end).for_each(|i| callback(i));
+}
+
 pub struct Accumulator {
     value: i64,
 }

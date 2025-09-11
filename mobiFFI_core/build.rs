@@ -239,6 +239,30 @@ fn is_string_param(ty: &Type) -> bool {
         || type_str == "std::string::String"
 }
 
+fn extract_callback_arg_types(ty: &Type) -> Option<Vec<String>> {
+    if let Type::ImplTrait(impl_trait) = ty {
+        for bound in &impl_trait.bounds {
+            if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                let path = &trait_bound.path;
+                if let Some(segment) = path.segments.last() {
+                    let ident = segment.ident.to_string();
+                    if ident == "Fn" || ident == "FnMut" || ident == "FnOnce" {
+                        if let syn::PathArguments::Parenthesized(args) = &segment.arguments {
+                            let arg_types: Vec<String> = args
+                                .inputs
+                                .iter()
+                                .filter_map(|t| rust_type_to_c(t))
+                                .collect();
+                            return Some(arg_types);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
     let name = func.sig.ident.to_string();
 
@@ -254,6 +278,10 @@ fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
             if is_string_param(&pat_type.ty) {
                 params.push((format!("{}_ptr", param_name), "const uint8_t*".to_string()));
                 params.push((format!("{}_len", param_name), "uintptr_t".to_string()));
+            } else if let Some(arg_types) = extract_callback_arg_types(&pat_type.ty) {
+                let cb_sig = format!("void (*)(void*, {})", arg_types.join(", "));
+                params.push((format!("{}_cb", param_name), cb_sig));
+                params.push((format!("{}_ud", param_name), "void*".to_string()));
             } else if let Some(c_type) = rust_type_to_c(&pat_type.ty) {
                 params.push((param_name, c_type));
             }
@@ -270,6 +298,10 @@ fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
         params,
         return_kind,
     })
+}
+
+fn is_callback_typedef(name: &str) -> bool {
+    name.ends_with("Callback") || name.ends_with("Handler") || name.ends_with("Fn")
 }
 
 fn rust_type_to_c(ty: &Type) -> Option<String> {
@@ -291,7 +323,9 @@ fn rust_type_to_c(ty: &Type) -> Option<String> {
         "bool" => Some("bool".to_string()),
         "()" => None,
         _ => {
-            if type_str.starts_with("*const") {
+            if is_callback_typedef(&type_str) {
+                Some(type_str)
+            } else if type_str.starts_with("*const") {
                 let inner = type_str.trim_start_matches("*const");
                 rust_type_to_c_ptr(inner, "const")
             } else if type_str.starts_with("*mut") {
@@ -318,11 +352,19 @@ fn rust_type_to_c_ptr(inner: &str, qualifier: &str) -> Option<String> {
     }
 }
 
+fn format_param(name: &str, ty: &str) -> String {
+    if ty.contains("(*)") {
+        ty.replace("(*)", &format!("(*{})", name))
+    } else {
+        format!("{} {}", ty, name)
+    }
+}
+
 fn generate_export_declaration(export: &FfiExport) -> String {
     let base_params: Vec<String> = export
         .params
         .iter()
-        .map(|(name, ty)| format!("{} {}", ty, name))
+        .map(|(name, ty)| format_param(name, ty))
         .collect();
 
     match &export.return_kind {

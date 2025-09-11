@@ -105,6 +105,7 @@ struct FfiStatus mffi_make_greeting(const uint8_t* name_ptr, uintptr_t name_len,
 struct FfiStatus mffi_safe_divide(int32_t numerator, int32_t denominator, int32_t *out);
 uintptr_t mffi_generate_sequence_len(int32_t count);
 struct FfiStatus mffi_generate_sequence_copy_into(int32_t count, int32_t *dst, uintptr_t dst_cap, uintptr_t *written);
+struct FfiStatus mffi_foreach_range(int32_t start, int32_t end, void (*callback_cb)(void*, int32_t), void* callback_ud);
 struct Accumulator * mffi_accumulator_new(void);
 struct FfiStatus mffi_accumulator_free(struct Accumulator * handle);
 struct FfiStatus mffi_accumulator_add(struct Accumulator * handle, int64_t amount);
