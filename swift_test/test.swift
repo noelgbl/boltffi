@@ -494,4 +494,28 @@ if degrees == 90 {
     exit(1)
 }
 
+print("\n--- Testing Option returns ---")
+
+var evenResult: Int32 = 0
+let hasSome = mffi_find_even(4, &evenResult)
+print("find_even(4) = \(hasSome), value = \(evenResult)")
+
+if hasSome == 1 && evenResult == 4 {
+    print("SUCCESS: Option Some works!")
+} else {
+    print("FAILED: Expected Some(4), got hasSome=\(hasSome), value=\(evenResult)")
+    exit(1)
+}
+
+var noneResult: Int32 = 0
+let hasNone = mffi_find_even(3, &noneResult)
+print("find_even(3) = \(hasNone)")
+
+if hasNone == 0 {
+    print("SUCCESS: Option None works!")
+} else {
+    print("FAILED: Expected None (0), got \(hasNone)")
+    exit(1)
+}
+
 print("\n=== ALL TESTS PASSED ===")

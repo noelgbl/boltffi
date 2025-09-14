@@ -247,3 +247,12 @@ pub fn direction_to_degrees(dir: Direction) -> i32 {
         Direction::West => 270,
     }
 }
+
+#[ffi_export]
+pub fn find_even(value: i32) -> Option<i32> {
+    if value % 2 == 0 {
+        Some(value)
+    } else {
+        None
+    }
+}

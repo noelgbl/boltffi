@@ -94,5 +94,6 @@ int64_t mffi_accumulator_get(struct Accumulator * handle);
 struct FfiStatus mffi_accumulator_reset(struct Accumulator * handle);
 Direction mffi_opposite_direction(Direction dir);
 int32_t mffi_direction_to_degrees(Direction dir);
+int32_t mffi_find_even(int32_t value, int32_t *out);
 
 #endif  /* MOBIFFI_CORE_H */

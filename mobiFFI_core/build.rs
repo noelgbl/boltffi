@@ -41,6 +41,7 @@ enum FfiReturnKind {
     ResultPrimitive(String),
     ResultString,
     Vec(String),
+    OptionPrimitive(String),
 }
 
 struct FfiExport {
@@ -359,6 +360,15 @@ fn classify_return_type(ty: &Type) -> FfiReturnKind {
                     }
                 }
             }
+            if segment.ident == "Option" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                        if let Some(c_type) = rust_type_to_c(inner_ty) {
+                            return FfiReturnKind::OptionPrimitive(c_type);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -556,6 +566,10 @@ fn generate_export_declaration(export: &FfiExport) -> String {
                 FfiReturnKind::ResultPrimitive(ty) => {
                     params.push(format!("{} *out", ty));
                     "struct FfiStatus".to_string()
+                }
+                FfiReturnKind::OptionPrimitive(ty) => {
+                    params.push(format!("{} *out", ty));
+                    "int32_t".to_string()
                 }
                 FfiReturnKind::Vec(_) => unreachable!(),
             };

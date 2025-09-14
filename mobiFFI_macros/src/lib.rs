@@ -262,6 +262,7 @@ enum ReturnKind {
     ResultPrimitive(syn::Type),
     ResultString,
     Vec(syn::Type),
+    OptionPrimitive(syn::Type),
 }
 
 fn extract_vec_inner(ty: &Type) -> Option<syn::Type> {
@@ -306,6 +307,13 @@ fn classify_return(output: &ReturnType) -> ReturnKind {
                                 } else {
                                     return ReturnKind::ResultPrimitive(inner_ty.clone());
                                 }
+                            }
+                        }
+                    }
+                    if segment.ident == "Option" {
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                                return ReturnKind::OptionPrimitive(inner_ty.clone());
                             }
                         }
                     }
@@ -656,6 +664,67 @@ pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
                             crate::FfiStatus::BUFFER_TOO_SMALL
                         } else {
                             crate::FfiStatus::OK
+                        }
+                    }
+                }
+            }
+        }
+        ReturnKind::OptionPrimitive(inner_ty) => {
+            let body = if has_conversions {
+                quote! {
+                    #(#conversions)*
+                    match #fn_name(#(#call_args),*) {
+                        Some(value) => {
+                            *out = value;
+                            1
+                        }
+                        None => 0
+                    }
+                }
+            } else {
+                quote! {
+                    match #fn_name(#(#call_args),*) {
+                        Some(value) => {
+                            *out = value;
+                            1
+                        }
+                        None => 0
+                    }
+                }
+            };
+
+            if has_params {
+                quote! {
+                    #input
+
+                    #[unsafe(no_mangle)]
+                    #fn_vis unsafe extern "C" fn #export_ident(
+                        #(#ffi_params),*,
+                        out: *mut #inner_ty
+                    ) -> i32 {
+                        if out.is_null() {
+                            return -1;
+                        }
+                        #body
+                    }
+                }
+            } else {
+                quote! {
+                    #input
+
+                    #[unsafe(no_mangle)]
+                    #fn_vis unsafe extern "C" fn #export_ident(
+                        out: *mut #inner_ty
+                    ) -> i32 {
+                        if out.is_null() {
+                            return -1;
+                        }
+                        match #fn_name() {
+                            Some(value) => {
+                                *out = value;
+                                1
+                            }
+                            None => 0
                         }
                     }
                 }
