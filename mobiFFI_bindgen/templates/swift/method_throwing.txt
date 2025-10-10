@@ -1,0 +1,6 @@
+var status = FfiStatus()
+let result = {{ ffi_name }}(handle{% for arg in args %}, {{ arg }}{% endfor %}, &status)
+if status.code != 0 {
+    throw FfiError(status: status)
+}
+return result as {{ return_type }}

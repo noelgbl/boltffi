@@ -146,13 +146,7 @@ impl ClassTemplate {
                             swift_type: TypeMapper::map_type(&param.param_type),
                         })
                         .collect(),
-                    body: if !method.is_async && !method.throws() {
-                        SyncMethodBodyTemplate::from_method(method, class, module)
-                            .render()
-                            .expect("sync method template failed")
-                    } else {
-                        format!("/* async/throwing not yet implemented */")
-                    },
+                    body: render_method_body(method, class, module),
                 })
                 .collect(),
             streams: class
@@ -261,5 +255,119 @@ impl SyncMethodBodyTemplate {
                 .collect(),
             has_return: method.output.as_ref().map_or(false, |t| !t.is_void()),
         }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "swift/method_throwing.txt", escape = "none")]
+pub struct ThrowingMethodBodyTemplate {
+    pub ffi_name: String,
+    pub args: Vec<String>,
+    pub return_type: String,
+}
+
+impl ThrowingMethodBodyTemplate {
+    pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
+        let class_prefix = class.ffi_prefix(&module.ffi_prefix());
+        Self {
+            ffi_name: method.ffi_name(&class_prefix),
+            args: method
+                .inputs
+                .iter()
+                .map(|p| NamingConvention::param_name(&p.name))
+                .collect(),
+            return_type: method
+                .output
+                .as_ref()
+                .map(TypeMapper::map_type)
+                .unwrap_or_else(|| "Void".into()),
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "swift/method_async.txt", escape = "none")]
+pub struct AsyncMethodBodyTemplate {
+    pub ffi_name: String,
+    pub ffi_poll: String,
+    pub ffi_complete: String,
+    pub ffi_cancel: String,
+    pub ffi_free: String,
+    pub args: Vec<String>,
+    pub return_type: String,
+}
+
+impl AsyncMethodBodyTemplate {
+    pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
+        let class_prefix = class.ffi_prefix(&module.ffi_prefix());
+        Self {
+            ffi_name: method.ffi_name(&class_prefix),
+            ffi_poll: method.ffi_poll(&class_prefix),
+            ffi_complete: method.ffi_complete(&class_prefix),
+            ffi_cancel: method.ffi_cancel(&class_prefix),
+            ffi_free: method.ffi_free(&class_prefix),
+            args: method
+                .inputs
+                .iter()
+                .map(|p| NamingConvention::param_name(&p.name))
+                .collect(),
+            return_type: method
+                .output
+                .as_ref()
+                .map(TypeMapper::map_type)
+                .unwrap_or_else(|| "Void".into()),
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "swift/method_async_throwing.txt", escape = "none")]
+pub struct AsyncThrowingMethodBodyTemplate {
+    pub ffi_name: String,
+    pub ffi_poll: String,
+    pub ffi_complete: String,
+    pub ffi_cancel: String,
+    pub ffi_free: String,
+    pub args: Vec<String>,
+    pub return_type: String,
+}
+
+impl AsyncThrowingMethodBodyTemplate {
+    pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
+        let class_prefix = class.ffi_prefix(&module.ffi_prefix());
+        Self {
+            ffi_name: method.ffi_name(&class_prefix),
+            ffi_poll: method.ffi_poll(&class_prefix),
+            ffi_complete: method.ffi_complete(&class_prefix),
+            ffi_cancel: method.ffi_cancel(&class_prefix),
+            ffi_free: method.ffi_free(&class_prefix),
+            args: method
+                .inputs
+                .iter()
+                .map(|p| NamingConvention::param_name(&p.name))
+                .collect(),
+            return_type: method
+                .output
+                .as_ref()
+                .map(TypeMapper::map_type)
+                .unwrap_or_else(|| "Void".into()),
+        }
+    }
+}
+
+fn render_method_body(method: &Method, class: &Class, module: &Module) -> String {
+    match (method.is_async, method.throws()) {
+        (true, true) => AsyncThrowingMethodBodyTemplate::from_method(method, class, module)
+            .render()
+            .expect("async throwing method template failed"),
+        (true, false) => AsyncMethodBodyTemplate::from_method(method, class, module)
+            .render()
+            .expect("async method template failed"),
+        (false, true) => ThrowingMethodBodyTemplate::from_method(method, class, module)
+            .render()
+            .expect("throwing method template failed"),
+        (false, false) => SyncMethodBodyTemplate::from_method(method, class, module)
+            .render()
+            .expect("sync method template failed"),
     }
 }

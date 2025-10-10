@@ -1,0 +1,26 @@
+let futureHandle = {{ ffi_name }}(handle{% for arg in args %}, {{ arg }}{% endfor %})
+defer { {{ ffi_free }}(futureHandle) }
+
+return try await withTaskCancellationHandler {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<{{ return_type }}, Error>) in
+        func poll() {
+            {{ ffi_poll }}(futureHandle, Unmanaged.passRetained(Continuation(continuation)).toOpaque()) { userData, pollResult in
+                let cont = Unmanaged<Continuation<{{ return_type }}>>.fromOpaque(userData!).takeRetainedValue()
+                if pollResult == 0 {
+                    var status = FfiStatus()
+                    let result = {{ ffi_complete }}(futureHandle, &status)
+                    if status.code != 0 {
+                        cont.resume(throwing: FfiError(status: status))
+                    } else {
+                        cont.resume(returning: result)
+                    }
+                } else {
+                    poll()
+                }
+            }
+        }
+        poll()
+    }
+} onCancel: {
+    {{ ffi_cancel }}(futureHandle)
+}
