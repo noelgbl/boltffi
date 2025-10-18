@@ -13,6 +13,7 @@ impl TypeMapper {
             Type::Vec(inner) => format!("[{}]", Self::map_type(inner)),
             Type::Option(inner) => format!("{}?", Self::map_type(inner)),
             Type::Result { ok, .. } => Self::map_type(ok),
+            Type::Callback(inner) => format!("({}) -> Void", Self::map_type(inner)),
             Type::Object(name) => NamingConvention::class_name(name),
             Type::Record(name) => NamingConvention::class_name(name),
             Type::Enum(name) => NamingConvention::class_name(name),
@@ -47,6 +48,12 @@ impl TypeMapper {
             Type::Vec(_) => "UnsafeMutableRawPointer".into(),
             Type::Option(inner) => Self::ffi_type(inner),
             Type::Result { ok, .. } => Self::ffi_type(ok),
+            Type::Callback(inner) => {
+                format!(
+                    "@convention(c) (UnsafeMutableRawPointer?, {}) -> Void",
+                    Self::ffi_type(inner)
+                )
+            }
             Type::Object(_) => "OpaquePointer".into(),
             Type::Record(name) => NamingConvention::class_name(name),
             Type::Enum(_) => "Int32".into(),

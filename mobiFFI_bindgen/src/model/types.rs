@@ -57,6 +57,7 @@ pub enum Type {
     Vec(Box<Type>),
     Option(Box<Type>),
     Result { ok: Box<Type>, err: Box<Type> },
+    Callback(Box<Type>),
     Object(String),
     Record(String),
     Enum(String),

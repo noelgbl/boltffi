@@ -109,7 +109,16 @@
         {
           "name": "foreach",
           "receiver": "Ref",
-          "inputs": [],
+          "inputs": [
+            {
+              "name": "callback",
+              "param_type": {
+                "Callback": {
+                  "Record": "DataPoint"
+                }
+              }
+            }
+          ],
           "output": null,
           "error": null,
           "is_async": false,

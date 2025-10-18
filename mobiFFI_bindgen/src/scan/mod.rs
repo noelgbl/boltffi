@@ -356,6 +356,29 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
             }
             rust_type_to_ffi_type(&type_ref.elem)
         }
+        Type::ImplTrait(impl_trait) => {
+            for bound in &impl_trait.bounds {
+                if let syn::TypeParamBound::Trait(trait_bound) = bound {
+                    let trait_name = trait_bound
+                        .path
+                        .segments
+                        .last()
+                        .map(|s| s.ident.to_string())?;
+
+                    if trait_name == "FnMut" || trait_name == "Fn" || trait_name == "FnOnce" {
+                        if let syn::PathArguments::Parenthesized(args) =
+                            &trait_bound.path.segments.last()?.arguments
+                        {
+                            let param_type = args.inputs.first().and_then(rust_type_to_ffi_type);
+                            return Some(MType::Callback(Box::new(
+                                param_type.unwrap_or(MType::Void),
+                            )));
+                        }
+                    }
+                }
+            }
+            None
+        }
         _ => None,
     }
 }

@@ -59,8 +59,8 @@ public final class DataStore {
         return mffi_datastore_copy_into(handle)
     }
 
-    public func foreach() {
-        mffi_datastore_foreach(handle)
+    public func foreach(callback: (DataPoint) -> Void) {
+        mffi_datastore_foreach(handle, callback)
     }
 
     public func sum() -> Double {
