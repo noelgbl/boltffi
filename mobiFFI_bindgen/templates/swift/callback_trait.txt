@@ -1,0 +1,61 @@
+{%- if let Some(doc) = doc %}
+/// {{ doc }}
+{%- endif %}
+public protocol {{ protocol_name }}: AnyObject {
+{%- for method in methods %}
+    func {{ method.swift_name }}({% for param in method.params %}{{ param.label }}: {{ param.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.is_async %} async{% endif %}{% if method.throws %} throws{% endif %}{% if let Some(ret) = method.return_type %} -> {{ ret }}{% endif %}
+{%- endfor %}
+}
+
+private class {{ wrapper_class }} {
+    let impl_: {{ protocol_name }}
+    init(_ impl_: {{ protocol_name }}) { self.impl_ = impl_ }
+}
+
+private var {{ vtable_var }}: {{ vtable_type }} = {
+    {{ vtable_type }}(
+        free: { handle in
+            guard handle != 0 else { return }
+            Unmanaged<{{ wrapper_class }}>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).release()
+        },
+        clone: { handle in
+            guard handle != 0 else { return 0 }
+            let wrapper = Unmanaged<{{ wrapper_class }}>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!)
+            _ = wrapper.retain()
+            return handle
+        }{% for method in methods %},
+        {{ method.ffi_name }}: { handle{% for param in method.params %}, {{ param.ffi_name }}{% endfor %}{% if method.has_out_param %}, outPtr{% endif %}{% if !method.is_async %}, statusPtr{% endif %}{% if method.is_async %}, callback, callbackData{% endif %} in
+            guard handle != 0 else { {% if !method.is_async %}statusPtr?.pointee = FfiStatus(code: 1){% endif %}; return }
+            let wrapper = Unmanaged<{{ wrapper_class }}>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+{%- if method.is_async %}
+            Task {
+                {% if method.has_return %}let result = {% endif %}{% if method.throws %}try {% endif %}await wrapper.impl_.{{ method.swift_name }}({% for param in method.params %}{{ param.label }}: {{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
+                callback?(callbackData{% if method.has_return %}, result{% endif %}, FfiStatus(code: 0))
+            }
+{%- else %}
+            {% if method.has_return %}let result = {% endif %}wrapper.impl_.{{ method.swift_name }}({% for param in method.params %}{{ param.label }}: {{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
+{%- if method.has_out_param %}
+            outPtr?.pointee = result
+{%- endif %}
+            statusPtr?.pointee = FfiStatus(code: 0)
+{%- endif %}
+        }{% endfor %}
+    )
+}()
+
+public enum {{ bridge_name }} {
+    private static var isRegistered = false
+    
+    public static func register() {
+        guard !isRegistered else { return }
+        {{ register_fn }}(&{{ vtable_var }})
+        isRegistered = true
+    }
+    
+    public static func create(_ impl: {{ protocol_name }}) -> OpaquePointer {
+        register()
+        let wrapper = {{ wrapper_class }}(impl)
+        let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
+        return {{ create_fn }}(handle)!
+    }
+}

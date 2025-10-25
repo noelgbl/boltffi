@@ -186,3 +186,122 @@ public final class SensorMonitor {
     }
 }
 
+
+public protocol DataProviderProtocol: AnyObject {
+    func getCount() -> UInt32
+    func getItem(index: UInt32) -> DataPoint
+}
+
+private class DataProviderWrapper {
+    let impl_: DataProviderProtocol
+    init(_ impl_: DataProviderProtocol) { self.impl_ = impl_ }
+}
+
+private var dataProviderVTableInstance: DataProviderVTable = {
+    DataProviderVTable(
+        free: { handle in
+            guard handle != 0 else { return }
+            Unmanaged<DataProviderWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).release()
+        },
+        clone: { handle in
+            guard handle != 0 else { return 0 }
+            let wrapper = Unmanaged<DataProviderWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!)
+            _ = wrapper.retain()
+            return handle
+        },
+        get_count: { handle, outPtr, statusPtr in
+            guard handle != 0 else { statusPtr?.pointee = FfiStatus(code: 1); return }
+            let wrapper = Unmanaged<DataProviderWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            let result = wrapper.impl_.getCount()
+            outPtr?.pointee = result
+            statusPtr?.pointee = FfiStatus(code: 0)
+        },
+        get_item: { handle, index, outPtr, statusPtr in
+            guard handle != 0 else { statusPtr?.pointee = FfiStatus(code: 1); return }
+            let wrapper = Unmanaged<DataProviderWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            let result = wrapper.impl_.getItem(index: index)
+            outPtr?.pointee = result
+            statusPtr?.pointee = FfiStatus(code: 0)
+        }
+    )
+}()
+
+public enum DataProviderBridge {
+    private static var isRegistered = false
+    
+    public static func register() {
+        guard !isRegistered else { return }
+        mffi_register_data_provider_vtable(&dataProviderVTableInstance)
+        isRegistered = true
+    }
+    
+    public static func create(_ impl: DataProviderProtocol) -> OpaquePointer {
+        register()
+        let wrapper = DataProviderWrapper(impl)
+        let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
+        return mffi_create_data_provider(handle)!
+    }
+}
+
+
+public protocol NavigationObserverProtocol: AnyObject {
+    func onLocationUpdated(lat: Double, lon: Double)
+    func onRouteChanged(routeId: UInt32)
+    func onError(code: Int32, message: String)
+}
+
+private class NavigationObserverWrapper {
+    let impl_: NavigationObserverProtocol
+    init(_ impl_: NavigationObserverProtocol) { self.impl_ = impl_ }
+}
+
+private var navigationObserverVTableInstance: NavigationObserverVTable = {
+    NavigationObserverVTable(
+        free: { handle in
+            guard handle != 0 else { return }
+            Unmanaged<NavigationObserverWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).release()
+        },
+        clone: { handle in
+            guard handle != 0 else { return 0 }
+            let wrapper = Unmanaged<NavigationObserverWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!)
+            _ = wrapper.retain()
+            return handle
+        },
+        on_location_updated: { handle, lat, lon, statusPtr in
+            guard handle != 0 else { statusPtr?.pointee = FfiStatus(code: 1); return }
+            let wrapper = Unmanaged<NavigationObserverWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            wrapper.impl_.onLocationUpdated(lat: lat, lon: lon)
+            statusPtr?.pointee = FfiStatus(code: 0)
+        },
+        on_route_changed: { handle, route_id, statusPtr in
+            guard handle != 0 else { statusPtr?.pointee = FfiStatus(code: 1); return }
+            let wrapper = Unmanaged<NavigationObserverWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            wrapper.impl_.onRouteChanged(routeId: routeId)
+            statusPtr?.pointee = FfiStatus(code: 0)
+        },
+        on_error: { handle, code, message, statusPtr in
+            guard handle != 0 else { statusPtr?.pointee = FfiStatus(code: 1); return }
+            let wrapper = Unmanaged<NavigationObserverWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
+            wrapper.impl_.onError(code: code, message: message)
+            statusPtr?.pointee = FfiStatus(code: 0)
+        }
+    )
+}()
+
+public enum NavigationObserverBridge {
+    private static var isRegistered = false
+    
+    public static func register() {
+        guard !isRegistered else { return }
+        mffi_register_navigation_observer_vtable(&navigationObserverVTableInstance)
+        isRegistered = true
+    }
+    
+    public static func create(_ impl: NavigationObserverProtocol) -> OpaquePointer {
+        register()
+        let wrapper = NavigationObserverWrapper(impl)
+        let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
+        return mffi_create_navigation_observer(handle)!
+    }
+}
+

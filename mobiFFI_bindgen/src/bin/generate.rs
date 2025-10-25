@@ -32,6 +32,11 @@ fn generate_swift(module: &Module) -> String {
         output.push_str("\n\n");
     }
 
+    for callback_trait in &module.callback_traits {
+        output.push_str(&Swift::render_callback_trait(callback_trait, module));
+        output.push_str("\n\n");
+    }
+
     output
 }
 

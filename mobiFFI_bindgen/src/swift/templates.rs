@@ -1,6 +1,8 @@
 use askama::Template;
 
-use crate::model::{Class, Enumeration, Method, Module, Record, StreamMethod, StreamMode};
+use crate::model::{
+    CallbackTrait, Class, Enumeration, Method, Module, Record, StreamMethod, StreamMode,
+};
 
 use super::body::BodyRenderer;
 use super::names::NamingConvention;
@@ -543,6 +545,114 @@ impl StreamCancellableTemplate {
             method_name_pascal: NamingConvention::class_name(&stream.name),
         }
     }
+}
+
+#[derive(Template)]
+#[template(path = "swift/callback_trait.txt", escape = "none")]
+pub struct CallbackTraitTemplate {
+    pub doc: Option<String>,
+    pub protocol_name: String,
+    pub wrapper_class: String,
+    pub vtable_var: String,
+    pub vtable_type: String,
+    pub bridge_name: String,
+    pub register_fn: String,
+    pub create_fn: String,
+    pub methods: Vec<TraitMethodView>,
+}
+
+pub struct TraitMethodView {
+    pub swift_name: String,
+    pub ffi_name: String,
+    pub params: Vec<TraitParamView>,
+    pub return_type: Option<String>,
+    pub is_async: bool,
+    pub throws: bool,
+    pub has_return: bool,
+    pub has_out_param: bool,
+}
+
+pub struct TraitParamView {
+    pub label: String,
+    pub ffi_name: String,
+    pub swift_type: String,
+    pub conversion: String,
+}
+
+impl CallbackTraitTemplate {
+    pub fn from_trait(callback_trait: &CallbackTrait, module: &Module) -> Self {
+        let prefix = module.ffi_prefix();
+        let trait_name = &callback_trait.name;
+
+        Self {
+            doc: callback_trait.doc.clone(),
+            protocol_name: format!("{}Protocol", trait_name),
+            wrapper_class: format!("{}Wrapper", trait_name),
+            vtable_var: format!("{}VTableInstance", to_camel_case(trait_name)),
+            vtable_type: callback_trait.ffi_vtable_name(),
+            bridge_name: format!("{}Bridge", trait_name),
+            register_fn: callback_trait.ffi_register_fn(&prefix),
+            create_fn: callback_trait.ffi_create_fn(&prefix),
+            methods: callback_trait
+                .methods
+                .iter()
+                .map(|method| {
+                    let has_return = method.has_return();
+                    TraitMethodView {
+                        swift_name: NamingConvention::method_name(&method.name),
+                        ffi_name: to_snake_case(&method.name),
+                        params: method
+                            .inputs
+                            .iter()
+                            .map(|param| {
+                                let swift_name = NamingConvention::param_name(&param.name);
+                                TraitParamView {
+                                    label: swift_name.clone(),
+                                    ffi_name: param.name.clone(),
+                                    swift_type: TypeMapper::map_type(&param.param_type),
+                                    conversion: swift_name,
+                                }
+                            })
+                            .collect(),
+                        return_type: method.output.as_ref().map(TypeMapper::map_type),
+                        is_async: method.is_async,
+                        throws: method.throws(),
+                        has_return,
+                        has_out_param: has_return && !method.is_async,
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
+fn to_snake_case(name: &str) -> String {
+    let mut result = String::new();
+    for (i, ch) in name.chars().enumerate() {
+        if ch.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(ch.to_ascii_lowercase());
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+fn to_camel_case(name: &str) -> String {
+    let mut result = String::new();
+    let mut first = true;
+    for ch in name.chars() {
+        if first {
+            result.push(ch.to_ascii_lowercase());
+            first = false;
+        } else {
+            result.push(ch);
+        }
+    }
+    result
 }
 
 
