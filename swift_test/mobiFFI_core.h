@@ -195,7 +195,6 @@ struct DataStore * mffi_datastore_new(void);
 struct FfiStatus mffi_datastore_free(struct DataStore * handle);
 struct FfiStatus mffi_datastore_add(struct DataStore * handle, DataPoint point);
 uintptr_t mffi_datastore_len(struct DataStore * handle);
-struct FfiStatus mffi_datastore_internal_debug(struct DataStore * handle, struct FfiString *out);
 uintptr_t mffi_datastore_copy_into(struct DataStore * handle, DataPoint* dst_ptr, uintptr_t dst_len);
 struct FfiStatus mffi_datastore_foreach(struct DataStore * handle, void (*callback_cb)(void*, DataPoint), void* callback_ud);
 double mffi_datastore_sum(struct DataStore * handle);

@@ -500,6 +500,10 @@ fn parse_ffi_class(impl_block: &syn::ItemImpl) -> (Vec<FfiExport>, Vec<FfiStream
                 continue;
             }
 
+            if method.attrs.iter().any(|a| a.path().is_ident("skip")) {
+                continue;
+            }
+
             let method_name = method.sig.ident.to_string();
             if method_name == "new" {
                 continue;
