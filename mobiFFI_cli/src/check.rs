@@ -23,12 +23,9 @@ impl EnvironmentCheck {
     pub fn run(required_targets: &[RustTarget]) -> Self {
         let rust_version = get_rust_version();
         let installed_targets = get_installed_targets();
-        
-        let required_triples: Vec<&str> = required_targets
-            .iter()
-            .map(|t| t.triple())
-            .collect();
-        
+
+        let required_triples: Vec<&str> = required_targets.iter().map(|t| t.triple()).collect();
+
         let missing_targets = required_triples
             .iter()
             .filter(|triple| !installed_targets.iter().any(|t| t == *triple))
@@ -88,14 +85,12 @@ fn get_installed_targets() -> Vec<String> {
         .output()
         .ok()
         .and_then(|output| {
-            String::from_utf8(output.stdout)
-                .ok()
-                .map(|s| {
-                    s.lines()
-                        .map(|line| line.trim().to_string())
-                        .filter(|line| !line.is_empty())
-                        .collect()
-                })
+            String::from_utf8(output.stdout).ok().map(|s| {
+                s.lines()
+                    .map(|line| line.trim().to_string())
+                    .filter(|line| !line.is_empty())
+                    .collect()
+            })
         })
         .unwrap_or_default()
 }
@@ -107,33 +102,31 @@ fn check_tool_exists(tool: &str) -> bool {
 fn find_android_ndk() -> Option<String> {
     std::env::var("ANDROID_NDK_HOME")
         .ok()
-        .or_else(|| std::env::var("ANDROID_HOME").ok().map(|home| format!("{}/ndk", home)))
-        .and_then(|path| {
-            std::path::Path::new(&path)
-                .exists()
-                .then_some(path)
+        .or_else(|| {
+            std::env::var("ANDROID_HOME")
+                .ok()
+                .map(|home| format!("{}/ndk", home))
         })
+        .and_then(|path| std::path::Path::new(&path).exists().then_some(path))
 }
 
 pub fn install_missing_targets(targets: &[String]) -> Result<()> {
-    targets
-        .iter()
-        .try_for_each(|target| {
-            let status = Command::new("rustup")
-                .args(["target", "add", target])
-                .status()
-                .map_err(|_| CliError::CommandFailed {
-                    command: format!("rustup target add {}", target),
-                    status: None,
-                })?;
+    targets.iter().try_for_each(|target| {
+        let status = Command::new("rustup")
+            .args(["target", "add", target])
+            .status()
+            .map_err(|_| CliError::CommandFailed {
+                command: format!("rustup target add {}", target),
+                status: None,
+            })?;
 
-            if !status.success() {
-                return Err(CliError::CommandFailed {
-                    command: format!("rustup target add {}", target),
-                    status: status.code(),
-                });
-            }
+        if !status.success() {
+            return Err(CliError::CommandFailed {
+                command: format!("rustup target add {}", target),
+                status: status.code(),
+            });
+        }
 
-            Ok(())
-        })
+        Ok(())
+    })
 }

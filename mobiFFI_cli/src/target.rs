@@ -78,16 +78,10 @@ impl RustTarget {
         architecture: Architecture::X86,
     };
 
-    pub const ALL_IOS: &'static [Self] = &[
-        Self::IOS_ARM64,
-        Self::IOS_SIM_ARM64,
-        Self::IOS_SIM_X86_64,
-    ];
+    pub const ALL_IOS: &'static [Self] =
+        &[Self::IOS_ARM64, Self::IOS_SIM_ARM64, Self::IOS_SIM_X86_64];
 
-    pub const ALL_MACOS: &'static [Self] = &[
-        Self::MACOS_ARM64,
-        Self::MACOS_X86_64,
-    ];
+    pub const ALL_MACOS: &'static [Self] = &[Self::MACOS_ARM64, Self::MACOS_X86_64];
 
     pub const ALL_ANDROID: &'static [Self] = &[
         Self::ANDROID_ARM64,
@@ -134,7 +128,10 @@ impl RustTarget {
 
 impl Platform {
     pub fn is_apple(&self) -> bool {
-        matches!(self, Platform::Ios | Platform::IosSimulator | Platform::MacOs)
+        matches!(
+            self,
+            Platform::Ios | Platform::IosSimulator | Platform::MacOs
+        )
     }
 
     pub fn is_simulator(&self) -> bool {

@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Config {
@@ -150,33 +150,44 @@ impl Default for AndroidPackConfig {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|err| ConfigError::ReadFailed { path: path.to_path_buf(), source: err })?;
-        
-        toml::from_str(&content)
-            .map_err(|err| ConfigError::ParseFailed { path: path.to_path_buf(), source: err })
+        let content = std::fs::read_to_string(path).map_err(|err| ConfigError::ReadFailed {
+            path: path.to_path_buf(),
+            source: err,
+        })?;
+
+        toml::from_str(&content).map_err(|err| ConfigError::ParseFailed {
+            path: path.to_path_buf(),
+            source: err,
+        })
     }
 
     pub fn save(&self, path: &Path) -> Result<(), ConfigError> {
-        let content = toml::to_string_pretty(self)
-            .map_err(ConfigError::SerializeFailed)?;
-        
-        std::fs::write(path, content)
-            .map_err(|err| ConfigError::WriteFailed { path: path.to_path_buf(), source: err })
+        let content = toml::to_string_pretty(self).map_err(ConfigError::SerializeFailed)?;
+
+        std::fs::write(path, content).map_err(|err| ConfigError::WriteFailed {
+            path: path.to_path_buf(),
+            source: err,
+        })
     }
 
     pub fn library_name(&self) -> &str {
-        self.package.crate_name.as_deref().unwrap_or(&self.package.name)
+        self.package
+            .crate_name
+            .as_deref()
+            .unwrap_or(&self.package.name)
     }
 
     pub fn swift_module_name(&self) -> String {
-        self.swift.module_name
+        self.swift
+            .module_name
             .clone()
             .unwrap_or_else(|| to_pascal_case(&self.package.name))
     }
 
     pub fn xcframework_name(&self) -> String {
-        self.pack.xcframework.name
+        self.pack
+            .xcframework
+            .name
             .clone()
             .unwrap_or_else(|| self.swift_module_name())
     }
@@ -198,14 +209,23 @@ fn to_pascal_case(input: &str) -> String {
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("failed to read config from {path}")]
-    ReadFailed { path: PathBuf, source: std::io::Error },
-    
+    ReadFailed {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
     #[error("failed to parse config from {path}")]
-    ParseFailed { path: PathBuf, source: toml::de::Error },
-    
+    ParseFailed {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+
     #[error("failed to serialize config")]
     SerializeFailed(#[source] toml::ser::Error),
-    
+
     #[error("failed to write config to {path}")]
-    WriteFailed { path: PathBuf, source: std::io::Error },
+    WriteFailed {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }

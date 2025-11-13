@@ -1,4 +1,4 @@
-use crate::check::{EnvironmentCheck, install_missing_targets};
+use crate::check::{install_missing_targets, EnvironmentCheck};
 use crate::error::Result;
 use crate::target::RustTarget;
 
@@ -20,11 +20,11 @@ impl Default for CheckOptions {
 
 pub fn run_check(options: CheckOptions) -> Result<bool> {
     let mut required_targets = Vec::new();
-    
+
     if options.ios {
         required_targets.extend(RustTarget::ALL_IOS.iter().cloned());
     }
-    
+
     if options.android {
         required_targets.extend(RustTarget::ALL_ANDROID.iter().cloned());
     }
@@ -40,7 +40,7 @@ pub fn run_check(options: CheckOptions) -> Result<bool> {
         println!("Done!");
     }
 
-    let all_good = !check.has_missing_targets() 
+    let all_good = !check.has_missing_targets()
         && (!options.ios || check.is_ready_for_ios())
         && (!options.android || check.is_ready_for_android());
 
@@ -49,7 +49,7 @@ pub fn run_check(options: CheckOptions) -> Result<bool> {
 
 fn print_environment_status(check: &EnvironmentCheck, options: &CheckOptions) {
     println!("Environment");
-    
+
     match &check.rust_version {
         Some(version) => println!("  {} {}", status_icon(true), version),
         None => println!("  {} Rust not found", status_icon(false)),
@@ -99,5 +99,9 @@ fn print_environment_status(check: &EnvironmentCheck, options: &CheckOptions) {
 }
 
 fn status_icon(success: bool) -> &'static str {
-    if success { "[ok]" } else { "[missing]" }
+    if success {
+        "[ok]"
+    } else {
+        "[missing]"
+    }
 }

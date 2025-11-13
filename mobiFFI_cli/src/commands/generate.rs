@@ -34,13 +34,12 @@ fn generate_swift(config: &Config, output: Option<PathBuf>) -> Result<()> {
     let output_path = output
         .map(|dir| dir.join("Generated.swift"))
         .unwrap_or_else(|| config.swift.output.join("Generated.swift"));
-    
+
     if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|source| CliError::CreateDirectoryFailed {
-                path: parent.to_path_buf(),
-                source,
-            })?;
+        std::fs::create_dir_all(parent).map_err(|source| CliError::CreateDirectoryFailed {
+            path: parent.to_path_buf(),
+            source,
+        })?;
     }
 
     let crate_path = config.library_name();

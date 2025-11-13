@@ -55,23 +55,20 @@ impl<'a> Builder<'a> {
     fn build_single_target(&self, target: &RustTarget) -> BuildResult {
         let mut cmd = Command::new("cargo");
         cmd.arg("build");
-        
+
         if self.options.release {
             cmd.arg("--release");
         }
-        
+
         cmd.arg("--target").arg(target.triple());
-        
+
         if let Some(ref package) = self.options.package {
             cmd.arg("-p").arg(package);
         } else {
             cmd.arg("-p").arg(self.config.library_name());
         }
 
-        let success = cmd
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
+        let success = cmd.status().map(|status| status.success()).unwrap_or(false);
 
         BuildResult {
             target: target.clone(),
@@ -83,19 +80,18 @@ impl<'a> Builder<'a> {
 pub fn build_single(target: &RustTarget, package: &str, release: bool) -> Result<()> {
     let mut cmd = Command::new("cargo");
     cmd.arg("build");
-    
+
     if release {
         cmd.arg("--release");
     }
-    
+
     cmd.arg("--target").arg(target.triple());
     cmd.arg("-p").arg(package);
 
-    let status = cmd.status()
-        .map_err(|_| CliError::CommandFailed {
-            command: format!("cargo build --target {}", target.triple()),
-            status: None,
-        })?;
+    let status = cmd.status().map_err(|_| CliError::CommandFailed {
+        command: format!("cargo build --target {}", target.triple()),
+        status: None,
+    })?;
 
     if !status.success() {
         return Err(CliError::CommandFailed {

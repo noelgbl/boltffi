@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::config::{
-    Config, PackageConfig, SwiftConfig, KotlinConfig,
-    IosConfig, AndroidConfig, PackConfig,
+    AndroidConfig, Config, IosConfig, KotlinConfig, PackConfig, PackageConfig, SwiftConfig,
 };
 use crate::error::Result;
 
@@ -13,13 +12,14 @@ pub struct InitOptions {
 
 pub fn run_init(options: InitOptions) -> Result<PathBuf> {
     let config_path = options.path.join("mobiFFI.toml");
-    
+
     if config_path.exists() {
         println!("mobiFFI.toml already exists");
         return Ok(config_path);
     }
 
-    let package_name = options.name
+    let package_name = options
+        .name
         .or_else(|| detect_package_name(&options.path))
         .unwrap_or_else(|| "mylib".to_string());
 
@@ -38,7 +38,7 @@ pub fn run_init(options: InitOptions) -> Result<PathBuf> {
 
 fn detect_package_name(path: &Path) -> Option<String> {
     let cargo_toml = path.join("Cargo.toml");
-    
+
     if !cargo_toml.exists() {
         return None;
     }
@@ -59,7 +59,7 @@ fn detect_package_name(path: &Path) -> Option<String> {
 
 fn create_default_config(package_name: &str) -> Config {
     let module_name = to_pascal_case(package_name);
-    
+
     Config {
         package: PackageConfig {
             name: package_name.to_string(),

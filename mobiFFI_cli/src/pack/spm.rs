@@ -22,34 +22,36 @@ impl<'a> SpmPackageGenerator<'a> {
 
     pub fn generate(&self) -> Result<PathBuf> {
         let output_path = self.config.pack.spm.output.join("Package.swift");
-        
+
         let content = self.generate_package_swift();
-        
-        std::fs::create_dir_all(&self.config.pack.spm.output)
-            .map_err(|source| CliError::CreateDirectoryFailed {
+
+        std::fs::create_dir_all(&self.config.pack.spm.output).map_err(|source| {
+            CliError::CreateDirectoryFailed {
                 path: self.config.pack.spm.output.clone(),
                 source,
-            })?;
-        
-        std::fs::write(&output_path, content)
-            .map_err(|source| CliError::WriteFailed {
-                path: output_path.clone(),
-                source,
-            })?;
-        
+            }
+        })?;
+
+        std::fs::write(&output_path, content).map_err(|source| CliError::WriteFailed {
+            path: output_path.clone(),
+            source,
+        })?;
+
         Ok(output_path)
     }
 
     fn generate_package_swift(&self) -> String {
         let package_name = &self.config.package.name;
         let module_name = self.config.swift_module_name();
-        let tools_version = self.config.swift.tools_version
-            .as_deref()
-            .unwrap_or("5.9");
-        let repo_url = self.config.pack.spm.repo_url
+        let tools_version = self.config.swift.tools_version.as_deref().unwrap_or("5.9");
+        let repo_url = self
+            .config
+            .pack
+            .spm
+            .repo_url
             .as_deref()
             .unwrap_or("https://github.com/user/repo");
-        
+
         format!(
             r#"// swift-tools-version:{tools_version}
 import PackageDescription
@@ -91,7 +93,7 @@ let package = Package(
 
     fn ios_version_for_spm(&self) -> String {
         let deployment_target = &self.config.ios.deployment_target;
-        
+
         deployment_target
             .split('.')
             .next()
@@ -105,11 +107,10 @@ pub fn update_existing_package_swift(
     version: &str,
     checksum: &str,
 ) -> Result<()> {
-    let content = std::fs::read_to_string(package_path)
-        .map_err(|source| CliError::ReadFailed {
-            path: package_path.to_path_buf(),
-            source,
-        })?;
+    let content = std::fs::read_to_string(package_path).map_err(|source| CliError::ReadFailed {
+        path: package_path.to_path_buf(),
+        source,
+    })?;
 
     let updated = content
         .lines()
@@ -125,11 +126,10 @@ pub fn update_existing_package_swift(
         .collect::<Vec<_>>()
         .join("\n");
 
-    std::fs::write(package_path, updated)
-        .map_err(|source| CliError::WriteFailed {
-            path: package_path.to_path_buf(),
-            source,
-        })?;
+    std::fs::write(package_path, updated).map_err(|source| CliError::WriteFailed {
+        path: package_path.to_path_buf(),
+        source,
+    })?;
 
     Ok(())
 }

@@ -29,11 +29,12 @@ impl<'a> XcframeworkBuilder<'a> {
     }
 
     pub fn build(self) -> Result<XcframeworkOutput> {
-        std::fs::create_dir_all(&self.output_dir)
-            .map_err(|source| CliError::CreateDirectoryFailed {
+        std::fs::create_dir_all(&self.output_dir).map_err(|source| {
+            CliError::CreateDirectoryFailed {
                 path: self.output_dir.clone(),
                 source,
-            })?;
+            }
+        })?;
 
         let device_libs = self.filter_device_libraries();
         let simulator_libs = self.filter_simulator_libraries();
@@ -41,7 +42,8 @@ impl<'a> XcframeworkBuilder<'a> {
 
         let fat_sim_lib = self.create_fat_simulator_library(&simulator_libs)?;
 
-        let xcframework_path = self.create_xcframework(&device_libs, fat_sim_lib.as_ref(), &macos_libs)?;
+        let xcframework_path =
+            self.create_xcframework(&device_libs, fat_sim_lib.as_ref(), &macos_libs)?;
 
         Ok(XcframeworkOutput {
             xcframework_path,
@@ -52,15 +54,15 @@ impl<'a> XcframeworkBuilder<'a> {
 
     pub fn build_with_zip(self) -> Result<XcframeworkOutput> {
         let mut output = self.build()?;
-        
+
         let zip_path = output.xcframework_path.with_extension("xcframework.zip");
         create_zip(&output.xcframework_path, &zip_path)?;
-        
+
         let checksum = compute_checksum(&zip_path)?;
-        
+
         output.zip_path = Some(zip_path);
         output.checksum = Some(checksum);
-        
+
         Ok(output)
     }
 
@@ -82,14 +84,17 @@ impl<'a> XcframeworkBuilder<'a> {
         if !self.config.ios.include_macos {
             return Vec::new();
         }
-        
+
         self.libraries
             .iter()
             .filter(|lib| lib.target.platform() == Platform::MacOs)
             .collect()
     }
 
-    fn create_fat_simulator_library(&self, simulator_libs: &[&BuiltLibrary]) -> Result<Option<PathBuf>> {
+    fn create_fat_simulator_library(
+        &self,
+        simulator_libs: &[&BuiltLibrary],
+    ) -> Result<Option<PathBuf>> {
         if simulator_libs.is_empty() {
             return Ok(None);
         }
@@ -99,22 +104,25 @@ impl<'a> XcframeworkBuilder<'a> {
         }
 
         let fat_dir = self.output_dir.join("ios-simulator-fat");
-        std::fs::create_dir_all(&fat_dir)
-            .map_err(|source| CliError::CreateDirectoryFailed { path: fat_dir.clone(), source })?;
+        std::fs::create_dir_all(&fat_dir).map_err(|source| CliError::CreateDirectoryFailed {
+            path: fat_dir.clone(),
+            source,
+        })?;
 
         let lib_name = self.config.library_name();
         let fat_lib_path = fat_dir.join(format!("lib{}.a", lib_name));
 
         let mut lipo_cmd = Command::new("lipo");
         lipo_cmd.arg("-create");
-        
-        simulator_libs
-            .iter()
-            .for_each(|lib| { lipo_cmd.arg(&lib.path); });
-        
+
+        simulator_libs.iter().for_each(|lib| {
+            lipo_cmd.arg(&lib.path);
+        });
+
         lipo_cmd.arg("-output").arg(&fat_lib_path);
 
-        let status = lipo_cmd.status()
+        let status = lipo_cmd
+            .status()
             .map_err(|source| CliError::LipoFailed { source })?;
 
         if !status.success() {
@@ -134,14 +142,17 @@ impl<'a> XcframeworkBuilder<'a> {
         macos_libs: &[&BuiltLibrary],
     ) -> Result<PathBuf> {
         let xcframework_name = self.config.xcframework_name();
-        let xcframework_path = self.output_dir.join(format!("{}.xcframework", xcframework_name));
+        let xcframework_path = self
+            .output_dir
+            .join(format!("{}.xcframework", xcframework_name));
 
         if xcframework_path.exists() {
-            std::fs::remove_dir_all(&xcframework_path)
-                .map_err(|source| CliError::CreateDirectoryFailed {
+            std::fs::remove_dir_all(&xcframework_path).map_err(|source| {
+                CliError::CreateDirectoryFailed {
                     path: xcframework_path.clone(),
                     source,
-                })?;
+                }
+            })?;
         }
 
         let headers_staging = self.prepare_headers()?;
@@ -151,25 +162,32 @@ impl<'a> XcframeworkBuilder<'a> {
 
         device_libs.iter().for_each(|lib| {
             xcodebuild_cmd
-                .arg("-library").arg(&lib.path)
-                .arg("-headers").arg(&headers_staging);
+                .arg("-library")
+                .arg(&lib.path)
+                .arg("-headers")
+                .arg(&headers_staging);
         });
 
         if let Some(sim_lib) = fat_sim_lib {
             xcodebuild_cmd
-                .arg("-library").arg(sim_lib)
-                .arg("-headers").arg(&headers_staging);
+                .arg("-library")
+                .arg(sim_lib)
+                .arg("-headers")
+                .arg(&headers_staging);
         }
 
         macos_libs.iter().for_each(|lib| {
             xcodebuild_cmd
-                .arg("-library").arg(&lib.path)
-                .arg("-headers").arg(&headers_staging);
+                .arg("-library")
+                .arg(&lib.path)
+                .arg("-headers")
+                .arg(&headers_staging);
         });
 
         xcodebuild_cmd.arg("-output").arg(&xcframework_path);
 
-        let status = xcodebuild_cmd.status()
+        let status = xcodebuild_cmd
+            .status()
             .map_err(|source| CliError::XcframeworkFailed { source })?;
 
         if !status.success() {
@@ -184,28 +202,35 @@ impl<'a> XcframeworkBuilder<'a> {
 
     fn prepare_headers(&self) -> Result<PathBuf> {
         let headers_staging = self.output_dir.join("headers_staging");
-        
+
         if headers_staging.exists() {
-            std::fs::remove_dir_all(&headers_staging)
-                .map_err(|source| CliError::CreateDirectoryFailed {
+            std::fs::remove_dir_all(&headers_staging).map_err(|source| {
+                CliError::CreateDirectoryFailed {
                     path: headers_staging.clone(),
                     source,
-                })?;
+                }
+            })?;
         }
-        
-        std::fs::create_dir_all(&headers_staging)
-            .map_err(|source| CliError::CreateDirectoryFailed {
+
+        std::fs::create_dir_all(&headers_staging).map_err(|source| {
+            CliError::CreateDirectoryFailed {
                 path: headers_staging.clone(),
                 source,
-            })?;
+            }
+        })?;
 
         copy_directory_contents(&self.headers_dir, &headers_staging)?;
 
-        let modulemap_content = generate_modulemap(&self.config.xcframework_name(), self.config.library_name());
+        let modulemap_content =
+            generate_modulemap(&self.config.xcframework_name(), self.config.library_name());
         let modulemap_path = headers_staging.join("module.modulemap");
-        
-        std::fs::write(&modulemap_path, modulemap_content)
-            .map_err(|source| CliError::WriteFailed { path: modulemap_path, source })?;
+
+        std::fs::write(&modulemap_path, modulemap_content).map_err(|source| {
+            CliError::WriteFailed {
+                path: modulemap_path,
+                source,
+            }
+        })?;
 
         Ok(headers_staging)
     }
@@ -231,70 +256,87 @@ fn copy_directory_contents(from: &Path, to: &Path) -> Result<()> {
         .try_for_each(|entry| {
             let relative = entry.path().strip_prefix(from).unwrap();
             let dest = to.join(relative);
-            
+
             if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|source| CliError::CreateDirectoryFailed {
+                std::fs::create_dir_all(parent).map_err(|source| {
+                    CliError::CreateDirectoryFailed {
                         path: parent.to_path_buf(),
                         source,
-                    })?;
-            }
-            
-            std::fs::copy(entry.path(), &dest)
-                .map_err(|source| CliError::CopyFailed {
-                    from: entry.path().to_path_buf(),
-                    to: dest,
-                    source,
+                    }
                 })?;
-            
+            }
+
+            std::fs::copy(entry.path(), &dest).map_err(|source| CliError::CopyFailed {
+                from: entry.path().to_path_buf(),
+                to: dest,
+                source,
+            })?;
+
             Ok(())
         })
 }
 
 fn create_zip(source_dir: &Path, zip_path: &Path) -> Result<()> {
-    let file = std::fs::File::create(zip_path)
-        .map_err(|source| CliError::WriteFailed { path: zip_path.to_path_buf(), source })?;
-    
+    let file = std::fs::File::create(zip_path).map_err(|source| CliError::WriteFailed {
+        path: zip_path.to_path_buf(),
+        source,
+    })?;
+
     let mut zip_writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
-    
+
     walkdir::WalkDir::new(source_dir)
         .into_iter()
         .filter_map(|entry| entry.ok())
         .try_for_each(|entry| {
-            let relative = entry.path().strip_prefix(source_dir.parent().unwrap()).unwrap();
+            let relative = entry
+                .path()
+                .strip_prefix(source_dir.parent().unwrap())
+                .unwrap();
             let path_string = relative.to_string_lossy().to_string();
-            
+
             if entry.file_type().is_dir() {
-                zip_writer.add_directory(path_string, options)
-                    .map_err(|_| CliError::ZipFailed { source: std::io::Error::new(std::io::ErrorKind::Other, "zip dir failed") })?;
+                zip_writer
+                    .add_directory(path_string, options)
+                    .map_err(|_| CliError::ZipFailed {
+                        source: std::io::Error::new(std::io::ErrorKind::Other, "zip dir failed"),
+                    })?;
             } else {
-                zip_writer.start_file(path_string, options)
-                    .map_err(|_| CliError::ZipFailed { source: std::io::Error::new(std::io::ErrorKind::Other, "zip start failed") })?;
-                
-                let content = std::fs::read(entry.path())
-                    .map_err(|source| CliError::ReadFailed { path: entry.path().to_path_buf(), source })?;
-                
+                zip_writer
+                    .start_file(path_string, options)
+                    .map_err(|_| CliError::ZipFailed {
+                        source: std::io::Error::new(std::io::ErrorKind::Other, "zip start failed"),
+                    })?;
+
+                let content =
+                    std::fs::read(entry.path()).map_err(|source| CliError::ReadFailed {
+                        path: entry.path().to_path_buf(),
+                        source,
+                    })?;
+
                 std::io::Write::write_all(&mut zip_writer, &content)
                     .map_err(|source| CliError::ZipFailed { source })?;
             }
-            
+
             Ok::<_, CliError>(())
         })?;
 
-    zip_writer.finish()
-        .map_err(|_| CliError::ZipFailed { source: std::io::Error::new(std::io::ErrorKind::Other, "zip finish failed") })?;
+    zip_writer.finish().map_err(|_| CliError::ZipFailed {
+        source: std::io::Error::new(std::io::ErrorKind::Other, "zip finish failed"),
+    })?;
 
     Ok(())
 }
 
 fn compute_checksum(path: &Path) -> Result<String> {
-    use sha2::{Sha256, Digest};
-    
-    let content = std::fs::read(path)
-        .map_err(|source| CliError::ReadFailed { path: path.to_path_buf(), source })?;
-    
+    use sha2::{Digest, Sha256};
+
+    let content = std::fs::read(path).map_err(|source| CliError::ReadFailed {
+        path: path.to_path_buf(),
+        source,
+    })?;
+
     let hash = Sha256::digest(&content);
     Ok(hex::encode(hash))
 }

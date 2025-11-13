@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use crate::config::ConfigError;
+use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
@@ -13,22 +13,38 @@ pub enum CliError {
     NoLibrariesFound { platform: String },
 
     #[error("command failed: {command}")]
-    CommandFailed { command: String, status: Option<i32> },
+    CommandFailed {
+        command: String,
+        status: Option<i32>,
+    },
 
     #[error("tool not found: {tool}")]
     ToolNotFound { tool: String },
 
     #[error("failed to create directory {path}")]
-    CreateDirectoryFailed { path: PathBuf, source: std::io::Error },
+    CreateDirectoryFailed {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("failed to copy file from {from} to {to}")]
-    CopyFailed { from: PathBuf, to: PathBuf, source: std::io::Error },
+    CopyFailed {
+        from: PathBuf,
+        to: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("failed to read file {path}")]
-    ReadFailed { path: PathBuf, source: std::io::Error },
+    ReadFailed {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("failed to write file {path}")]
-    WriteFailed { path: PathBuf, source: std::io::Error },
+    WriteFailed {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error("xcframework creation failed")]
     XcframeworkFailed { source: std::io::Error },

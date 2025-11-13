@@ -3,33 +3,37 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub fn generate() {
-    let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+    let crate_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
-    
+
     let crate_name = read_crate_name(&crate_dir);
     let header_name = format!("{}.h", crate_name);
-    
+
     generate_header(&crate_dir, &out_dir, &header_name);
     copy_header_to_crate(&crate_dir, &out_dir, &header_name);
-    
+
     println!("cargo:rerun-if-changed=src/");
 }
 
 pub fn generate_with_options(options: GenerateOptions) {
-    let crate_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+    let crate_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
-    
-    let crate_name = options.crate_name
+
+    let crate_name = options
+        .crate_name
         .unwrap_or_else(|| read_crate_name(&crate_dir));
-    let header_name = options.header_name
+    let header_name = options
+        .header_name
         .unwrap_or_else(|| format!("{}.h", crate_name));
-    
+
     generate_header(&crate_dir, &out_dir, &header_name);
-    
+
     if options.copy_to_crate {
         copy_header_to_crate(&crate_dir, &out_dir, &header_name);
     }
-    
+
     println!("cargo:rerun-if-changed=src/");
 }
 
@@ -44,17 +48,17 @@ impl GenerateOptions {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn crate_name(mut self, name: impl Into<String>) -> Self {
         self.crate_name = Some(name.into());
         self
     }
-    
+
     pub fn header_name(mut self, name: impl Into<String>) -> Self {
         self.header_name = Some(name.into());
         self
     }
-    
+
     pub fn copy_to_crate(mut self, copy: bool) -> Self {
         self.copy_to_crate = copy;
         self
@@ -63,9 +67,8 @@ impl GenerateOptions {
 
 fn read_crate_name(crate_dir: &Path) -> String {
     let cargo_toml_path = crate_dir.join("Cargo.toml");
-    let content = fs::read_to_string(&cargo_toml_path)
-        .expect("Failed to read Cargo.toml");
-    
+    let content = fs::read_to_string(&cargo_toml_path).expect("Failed to read Cargo.toml");
+
     content
         .lines()
         .find(|line| line.trim().starts_with("name"))
@@ -76,7 +79,7 @@ fn read_crate_name(crate_dir: &Path) -> String {
 
 fn generate_header(crate_dir: &Path, out_dir: &Path, header_name: &str) {
     let header_path = out_dir.join(header_name);
-    
+
     cbindgen::Builder::new()
         .with_crate(crate_dir)
         .with_language(cbindgen::Language::C)
@@ -88,14 +91,14 @@ fn generate_header(crate_dir: &Path, out_dir: &Path, header_name: &str) {
         .generate()
         .expect("Failed to generate bindings")
         .write_to_file(&header_path);
-    
+
     println!("cargo:warning=Generated header: {}", header_path.display());
 }
 
 fn copy_header_to_crate(crate_dir: &Path, out_dir: &Path, header_name: &str) {
     let source = out_dir.join(header_name);
     let dest = crate_dir.join(header_name);
-    
+
     if source.exists() {
         fs::copy(&source, &dest).expect("Failed to copy header to crate directory");
         println!("cargo:warning=Copied header to: {}", dest.display());
