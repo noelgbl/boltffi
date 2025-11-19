@@ -1235,17 +1235,9 @@ fn append_macro_exports(
         let has_streams = !stream_exports.is_empty();
         let atomic_cas_defs = if (has_async || has_streams) && !header.contains("mffi_atomic_u8_cas")
         {
-            let include_stdatomic = if header.contains("<stdatomic.h>") {
-                ""
-            } else {
-                "#include <stdatomic.h>\n\n"
-            };
-            format!(
-                "{}static inline bool mffi_atomic_u8_cas(uint8_t* state, uint8_t expected, uint8_t desired) {{\n  return atomic_compare_exchange_strong_explicit((_Atomic uint8_t*)state, &expected, desired, memory_order_acq_rel, memory_order_acquire);\n}}\n\nstatic inline uint64_t mffi_atomic_u64_exchange(uint64_t* slot, uint64_t value) {{\n  return atomic_exchange_explicit((_Atomic uint64_t*)slot, value, memory_order_acq_rel);\n}}\n\nstatic inline bool mffi_atomic_u64_cas(uint64_t* slot, uint64_t expected, uint64_t desired) {{\n  return atomic_compare_exchange_strong_explicit((_Atomic uint64_t*)slot, &expected, desired, memory_order_acq_rel, memory_order_acquire);\n}}\n\nstatic inline uint64_t mffi_atomic_u64_load(uint64_t* slot) {{\n  return atomic_load_explicit((_Atomic uint64_t*)slot, memory_order_acquire);\n}}\n\n",
-                include_stdatomic
-            )
+            include_str!("templates/atomics.h")
         } else {
-            String::new()
+            ""
         };
 
         let stream_continuation_defs = if has_streams
