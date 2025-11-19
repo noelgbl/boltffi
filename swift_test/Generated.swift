@@ -940,7 +940,7 @@ ensureOk(status)
         }
 
         private func handlePoll(pollResult: Int8) {
-            _ = pollResult
+            let isClosed = pollResult == 1
 
             let entered = withUnsafeMutablePointer(to: &callbackTag) { mffi_atomic_u8_cas($0, 0, 1) }
             guard entered else {
@@ -962,6 +962,11 @@ ensureOk(status)
                 UnsafeBufferPointer(start: buffer, count: Int(count)).forEach { element in
                     _ = continuation.yield(element)
                 }
+            }
+
+            if isClosed {
+                requestTermination()
+                return
             }
 
             guard (withUnsafeMutablePointer(to: &lifecycleTag) { mffi_atomic_u8_cas($0, 0, 0) }) else { return }

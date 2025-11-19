@@ -68,7 +68,7 @@ AsyncStream<{{ item_type }}> { continuation in
         }
 
         private func handlePoll(pollResult: Int8) {
-            _ = pollResult
+            let isClosed = pollResult == 1
 
             let entered = withUnsafeMutablePointer(to: &callbackTag) { {{ atomic_cas_fn }}($0, 0, 1) }
             guard entered else {
@@ -90,6 +90,11 @@ AsyncStream<{{ item_type }}> { continuation in
                 UnsafeBufferPointer(start: buffer, count: Int(count)).forEach { element in
                     _ = continuation.yield(element)
                 }
+            }
+
+            if isClosed {
+                requestTermination()
+                return
             }
 
             guard (withUnsafeMutablePointer(to: &lifecycleTag) { {{ atomic_cas_fn }}($0, 0, 0) }) else { return }

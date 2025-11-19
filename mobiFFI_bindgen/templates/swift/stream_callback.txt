@@ -60,7 +60,7 @@ final class CallbackContext: @unchecked Sendable {
     }
 
     private func handlePoll(pollResult: Int8) {
-        _ = pollResult
+        let isClosed = pollResult == 1
 
         let entered = withUnsafeMutablePointer(to: &callbackTag) { {{ atomic_cas_fn }}($0, 0, 1) }
         guard entered else {
@@ -79,6 +79,11 @@ final class CallbackContext: @unchecked Sendable {
             let count = {{ pop_batch_fn }}(subscription, buffer, bufferCapacity)
             guard count > 0 else { break }
             UnsafeBufferPointer(start: buffer, count: Int(count)).forEach(callback)
+        }
+
+        if isClosed {
+            requestTermination()
+            return
         }
 
         guard (withUnsafeMutablePointer(to: &lifecycleTag) { {{ atomic_cas_fn }}($0, 0, 0) }) else { return }

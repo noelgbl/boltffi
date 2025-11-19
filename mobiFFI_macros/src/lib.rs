@@ -1739,7 +1739,7 @@ fn generate_stream_exports(
             callback: crate::StreamContinuationCallback,
         ) {
             if subscription_handle.is_null() {
-                callback(callback_data, crate::StreamPollResult::ItemsAvailable);
+                callback(callback_data, crate::StreamPollResult::Closed);
                 return;
             }
             let subscription = unsafe {

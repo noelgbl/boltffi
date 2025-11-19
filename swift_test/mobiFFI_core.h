@@ -112,8 +112,8 @@ typedef struct ApiResult {
 #define ApiResult_TAG_ErrorWithData 2
 
 typedef int8_t StreamPollResult;
-#define StreamPollResult_ItemsAvailable 0
-#define StreamPollResult_Pending 1
+#define StreamPollResult_Ready 0
+#define StreamPollResult_Closed 1
 
 typedef uint8_t ContinuationState;
 #define ContinuationState_Empty 0

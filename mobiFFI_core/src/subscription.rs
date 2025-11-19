@@ -7,8 +7,8 @@ use crate::ringbuffer::SpscRingBuffer;
 #[repr(i8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamPollResult {
-    ItemsAvailable = 0,
-    Pending = 1,
+    Ready = 0,
+    Closed = 1,
 }
 
 pub type StreamContinuationCallback = extern "C" fn(callback_data: u64, StreamPollResult);
@@ -72,19 +72,19 @@ impl StreamContinuationScheduler {
                 }
                 ContinuationState::Waked => {
                     if self.try_transition(ContinuationState::Waked, ContinuationState::Empty) {
-                        callback(callback_data, StreamPollResult::ItemsAvailable);
+                        callback(callback_data, StreamPollResult::Ready);
                         return;
                     }
                 }
                 ContinuationState::Stored => {
-                    self.invoke_stored(StreamPollResult::ItemsAvailable);
+                    self.invoke_stored(StreamPollResult::Ready);
                     self.callback_data.store(callback_data, Ordering::Release);
                     self.callback_ptr
                         .store(callback as *mut (), Ordering::Release);
                     return;
                 }
                 ContinuationState::Cancelled => {
-                    callback(callback_data, StreamPollResult::ItemsAvailable);
+                    callback(callback_data, StreamPollResult::Closed);
                     return;
                 }
             }
@@ -96,7 +96,7 @@ impl StreamContinuationScheduler {
             match self.current_state() {
                 ContinuationState::Stored => {
                     if self.try_transition(ContinuationState::Stored, ContinuationState::Empty) {
-                        self.invoke_stored(StreamPollResult::ItemsAvailable);
+                        self.invoke_stored(StreamPollResult::Ready);
                         return;
                     }
                 }
@@ -116,7 +116,7 @@ impl StreamContinuationScheduler {
                 ContinuationState::Stored => {
                     if self.try_transition(ContinuationState::Stored, ContinuationState::Cancelled)
                     {
-                        self.invoke_stored(StreamPollResult::ItemsAvailable);
+                        self.invoke_stored(StreamPollResult::Closed);
                         return;
                     }
                 }
@@ -230,12 +230,12 @@ impl<T: Send + 'static> EventSubscription<T> {
 
     pub fn poll(&self, callback_data: u64, callback: StreamContinuationCallback) {
         if !self.is_active() {
-            callback(callback_data, StreamPollResult::ItemsAvailable);
+            callback(callback_data, StreamPollResult::Closed);
             return;
         }
 
         if self.ring_buffer.available_count() > 0 {
-            callback(callback_data, StreamPollResult::ItemsAvailable);
+            callback(callback_data, StreamPollResult::Ready);
             return;
         }
 
@@ -310,7 +310,7 @@ pub unsafe fn subscription_poll<T: Send + 'static>(
     callback: StreamContinuationCallback,
 ) {
     if handle.is_null() {
-        callback(callback_data, StreamPollResult::ItemsAvailable);
+        callback(callback_data, StreamPollResult::Closed);
         return;
     }
 
