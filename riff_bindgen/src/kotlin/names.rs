@@ -131,3 +131,62 @@ impl NamingConvention {
         format!("{}.{}", package, class_name)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KOTLIN_KEYWORDS: &[&str] = &[
+        "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
+        "interface", "is", "null", "object", "package", "return", "super", "this", "throw",
+        "true", "try", "typealias", "typeof", "val", "var", "when", "while", "by", "catch",
+        "constructor", "delegate", "dynamic", "field", "file", "finally", "get", "import",
+        "init", "param", "property", "receiver", "set", "setparam", "value", "where", "actual",
+        "abstract", "annotation", "companion", "const", "crossinline", "data", "enum", "expect",
+        "external", "final", "infix", "inline", "inner", "internal", "lateinit", "noinline",
+        "open", "operator", "out", "override", "private", "protected", "public", "reified",
+        "sealed", "suspend", "tailrec", "vararg",
+    ];
+
+    #[test]
+    fn test_all_keywords_escaped() {
+        for keyword in KOTLIN_KEYWORDS {
+            let escaped = NamingConvention::escape_keyword(keyword);
+            assert_eq!(
+                escaped,
+                format!("`{}`", keyword),
+                "keyword '{}' should be escaped",
+                keyword
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_keywords_not_escaped() {
+        let non_keywords = ["count", "name", "sensor", "handle", "result", "buffer"];
+        for word in non_keywords {
+            let escaped = NamingConvention::escape_keyword(word);
+            assert_eq!(escaped, word, "'{}' should not be escaped", word);
+        }
+    }
+
+    #[test]
+    fn test_param_name_escapes_keywords() {
+        assert_eq!(NamingConvention::param_name("value"), "`value`");
+        assert_eq!(NamingConvention::param_name("data"), "`data`");
+        assert_eq!(NamingConvention::param_name("object"), "`object`");
+    }
+
+    #[test]
+    fn test_method_name_escapes_keywords() {
+        assert_eq!(NamingConvention::method_name("get"), "`get`");
+        assert_eq!(NamingConvention::method_name("set"), "`set`");
+        assert_eq!(NamingConvention::method_name("init"), "`init`");
+    }
+
+    #[test]
+    fn test_snake_case_conversion_then_escape() {
+        assert_eq!(NamingConvention::param_name("get_value"), "getValue");
+        assert_eq!(NamingConvention::method_name("set_data"), "setData");
+    }
+}
