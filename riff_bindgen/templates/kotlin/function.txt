@@ -6,7 +6,7 @@ fun {{ func_name }}({% for param in params %}{{ param.name }}: {{ param.kotlin_t
 {%- else if return_kind.is_enum() %}
 {%- if enum_is_data %}
     val buf = Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
-    return useDirectBuffer(buf) { buffer ->
+    return useNativeBuffer(buf) { buffer ->
         buffer.order(ByteOrder.nativeOrder())
         {{ enum_codec_name.as_ref().unwrap() }}.read(buffer)
     }
@@ -17,7 +17,7 @@ fun {{ func_name }}({% for param in params %}{{ param.name }}: {{ param.kotlin_t
     return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}){{ return_kind.vec_list_suffix() }}
 {%- else if return_kind.is_vec_record() %}
     val buf = Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
-    return useDirectBuffer(buf) { buffer ->
+    return useNativeBuffer(buf) { buffer ->
         buffer.order(ByteOrder.nativeOrder())
         {{ reader_name.as_ref().unwrap() }}.readAll(buffer, buffer.capacity() / {{ reader_name.as_ref().unwrap() }}.STRUCT_SIZE)
     }

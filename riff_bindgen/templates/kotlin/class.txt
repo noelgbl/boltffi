@@ -4,7 +4,7 @@
  */
 {%- when None %}{% endmatch %}
 class {{ class_name }} private constructor(private val handle: Long) : AutoCloseable {
-    @Volatile private var closed = false
+    private val closed = AtomicBoolean(false)
 {%- for ctor in constructors %}
 
     constructor({% for param in ctor.params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}) : this(
@@ -13,13 +13,8 @@ class {{ class_name }} private constructor(private val handle: Long) : AutoClose
 {%- endfor %}
 
     override fun close() {
-        if (closed) return
-        closed = true
+        if (!closed.compareAndSet(false, true)) return
         Native.{{ ffi_free }}(handle)
-    }
-
-    protected fun finalize() {
-        close()
     }
 {%- for method in methods %}
 

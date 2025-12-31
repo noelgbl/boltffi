@@ -7,9 +7,9 @@ private object {{ codec_name }} {
     private const val TAG_{{ variant.const_name }} = {{ variant.tag_value }}
 {%- endfor %}
 
-    fun pack(value: {{ class_name }}): ByteBuffer {
-        val buf = ByteBuffer.allocateDirect(STRUCT_SIZE)
-        buf.order(ByteOrder.nativeOrder())
+    fun pack(value: {{ class_name }}): ByteArray {
+        val bytes = ByteArray(STRUCT_SIZE)
+        val buf = ByteBuffer.wrap(bytes).order(ByteOrder.nativeOrder())
 
         when (value) {
 {%- for variant in variants %}
@@ -28,7 +28,7 @@ private object {{ codec_name }} {
 {%- endfor %}
         }
 
-        return buf
+        return bytes
     }
 
     fun read(buf: ByteBuffer): {{ class_name }} {

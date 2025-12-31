@@ -2,6 +2,7 @@ package {{ package_name }}
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicBoolean
 
 class FfiException(val code: Int, message: String) : Exception(message)
 
@@ -13,10 +14,10 @@ private fun checkStatus(code: Int) {
     }
 }
 
-private inline fun <T> useDirectBuffer(buffer: ByteBuffer, block: (ByteBuffer) -> T): T {
+private inline fun <T> useNativeBuffer(buffer: ByteBuffer, block: (ByteBuffer) -> T): T {
     return try {
         block(buffer)
     } finally {
-        Native.{{ prefix }}_free_direct_buffer(buffer)
+        Native.{{ prefix }}_free_native_buffer(buffer)
     }
 }

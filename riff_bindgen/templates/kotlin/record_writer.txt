@@ -4,20 +4,15 @@ private object {{ writer_name }} {
     const val OFFSET_{{ field.const_name }} = {{ field.offset }}
 {%- endfor %}
 
-    fun pack(items: List<{{ class_name }}>): ByteBuffer {
-        val buf = ByteBuffer.allocateDirect(items.size * STRUCT_SIZE)
-        buf.order(ByteOrder.nativeOrder())
-        writeAll(buf, items)
-        return buf
-    }
-
-    fun writeAll(buf: ByteBuffer, items: List<{{ class_name }}>) {
-        var base = 0
-        for (item in items) {
+    fun pack(items: List<{{ class_name }}>): ByteArray {
+        val bytes = ByteArray(items.size * STRUCT_SIZE)
+        val buf = ByteBuffer.wrap(bytes).order(ByteOrder.nativeOrder())
+        items.forEachIndexed { index, item ->
+            val base = index * STRUCT_SIZE
 {%- for field in fields %}
             buf.{{ field.putter }}(base + OFFSET_{{ field.const_name }}, {{ field.value_expr }})
 {%- endfor %}
-            base += STRUCT_SIZE
         }
+        return bytes
     }
 }

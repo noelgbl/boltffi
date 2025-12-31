@@ -18,18 +18,24 @@ JNIEXPORT jobject JNICALL {{ func.jni_name }}(JNIEnv *env, jclass cls{{ func.jni
     {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->GetPrimitiveArrayCritical(env, {{ param.name }}, NULL);
 {%- endif %}
 {%- if param.is_record_buffer() %}
-    void* _{{ param.name }}_ptr = (*env)->GetDirectBufferAddress(env, {{ param.name }});
-    jlong _{{ param.name }}_cap = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(_{{ param.name }}_cap / (jlong){{ param.record_struct_size }});
+    jsize _{{ param.name }}_size = (*env)->GetArrayLength(env, {{ param.name }});
+    jbyte* _{{ param.name }}_ptr = (*env)->GetByteArrayElements(env, {{ param.name }}, NULL);
+    uintptr_t _{{ param.name }}_len = (uintptr_t)(_{{ param.name }}_size / {{ param.record_struct_size }});
 {%- endif %}
 {%- if param.is_data_enum() %}
-    void* _{{ param.name }}_ptr = (*env)->GetDirectBufferAddress(env, {{ param.name }});
+    jbyte* _{{ param.name }}_ptr = (*env)->GetByteArrayElements(env, {{ param.name }}, NULL);
 {%- endif %}
 {%- endfor %}
     {{ func.data_enum_return_name }} _enum_result = {{ func.ffi_name }}({% for param in func.params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
 {%- for param in func.params %}
 {%- if param.is_primitive_array() %}
     (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
 {%- endif %}
 {%- if param.is_string %}
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
@@ -52,12 +58,12 @@ JNIEXPORT jobject JNICALL {{ func.jni_name }}(JNIEnv *env, jclass cls{{ func.jni
     {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->GetPrimitiveArrayCritical(env, {{ param.name }}, NULL);
 {%- endif %}
 {%- if param.is_record_buffer() %}
-    void* _{{ param.name }}_ptr = (*env)->GetDirectBufferAddress(env, {{ param.name }});
-    jlong _{{ param.name }}_cap = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(_{{ param.name }}_cap / (jlong){{ param.record_struct_size }});
+    jsize _{{ param.name }}_size = (*env)->GetArrayLength(env, {{ param.name }});
+    jbyte* _{{ param.name }}_ptr = (*env)->GetByteArrayElements(env, {{ param.name }}, NULL);
+    uintptr_t _{{ param.name }}_len = (uintptr_t)(_{{ param.name }}_size / {{ param.record_struct_size }});
 {%- endif %}
 {%- if param.is_data_enum() %}
-    void* _{{ param.name }}_ptr = (*env)->GetDirectBufferAddress(env, {{ param.name }});
+    jbyte* _{{ param.name }}_ptr = (*env)->GetByteArrayElements(env, {{ param.name }}, NULL);
 {%- endif %}
 {%- endfor %}
     uintptr_t _len = {{ func.vec_len_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
@@ -69,6 +75,12 @@ JNIEXPORT jobject JNICALL {{ func.jni_name }}(JNIEnv *env, jclass cls{{ func.jni
 {%- for param in func.params %}
 {%- if param.is_primitive_array() %}
     (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
 {%- endif %}
 {%- if param.is_string %}
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
@@ -88,12 +100,12 @@ JNIEXPORT {{ func.vec_jni_array_type }} JNICALL {{ func.jni_name }}(JNIEnv *env,
     {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->GetPrimitiveArrayCritical(env, {{ param.name }}, NULL);
 {%- endif %}
 {%- if param.is_record_buffer() %}
-    void* _{{ param.name }}_ptr = (*env)->GetDirectBufferAddress(env, {{ param.name }});
-    jlong _{{ param.name }}_cap = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(_{{ param.name }}_cap / (jlong){{ param.record_struct_size }});
+    jsize _{{ param.name }}_size = (*env)->GetArrayLength(env, {{ param.name }});
+    jbyte* _{{ param.name }}_ptr = (*env)->GetByteArrayElements(env, {{ param.name }}, NULL);
+    uintptr_t _{{ param.name }}_len = (uintptr_t)(_{{ param.name }}_size / {{ param.record_struct_size }});
 {%- endif %}
 {%- if param.is_data_enum() %}
-    void* _{{ param.name }}_ptr = (*env)->GetDirectBufferAddress(env, {{ param.name }});
+    jbyte* _{{ param.name }}_ptr = (*env)->GetByteArrayElements(env, {{ param.name }}, NULL);
 {%- endif %}
 {%- endfor %}
     jlong _len = (jlong){{ func.vec_len_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
@@ -106,6 +118,12 @@ JNIEXPORT {{ func.vec_jni_array_type }} JNICALL {{ func.jni_name }}(JNIEnv *env,
 {%- for param in func.params %}
 {%- if param.is_primitive_array() %}
     (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
 {%- endif %}
 {%- if param.is_string %}
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
@@ -125,12 +143,12 @@ JNIEXPORT {{ func.jni_return }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass 
     {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->GetPrimitiveArrayCritical(env, {{ param.name }}, NULL);
 {%- endif %}
 {%- if param.is_record_buffer() %}
-    void* _{{ param.name }}_ptr = (*env)->GetDirectBufferAddress(env, {{ param.name }});
-    jlong _{{ param.name }}_cap = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(_{{ param.name }}_cap / (jlong){{ param.record_struct_size }});
+    jsize _{{ param.name }}_size = (*env)->GetArrayLength(env, {{ param.name }});
+    jbyte* _{{ param.name }}_ptr = (*env)->GetByteArrayElements(env, {{ param.name }}, NULL);
+    uintptr_t _{{ param.name }}_len = (uintptr_t)(_{{ param.name }}_size / {{ param.record_struct_size }});
 {%- endif %}
 {%- if param.is_data_enum() %}
-    void* _{{ param.name }}_ptr = (*env)->GetDirectBufferAddress(env, {{ param.name }});
+    jbyte* _{{ param.name }}_ptr = (*env)->GetByteArrayElements(env, {{ param.name }}, NULL);
 {%- endif %}
 {%- endfor %}
 {%- if func.return_kind.is_void() %}
@@ -138,6 +156,12 @@ JNIEXPORT {{ func.jni_return }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass 
 {%- for param in func.params %}
 {%- if param.is_primitive_array() %}
     (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
 {%- endif %}
 {%- if param.is_string %}
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
@@ -150,6 +174,12 @@ JNIEXPORT {{ func.jni_return }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass 
 {%- for param in func.params %}
 {%- if param.is_primitive_array() %}
     (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
 {%- endif %}
 {%- if param.is_string %}
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
@@ -169,6 +199,12 @@ JNIEXPORT {{ func.jni_return }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass 
 {%- for param in func.params %}
 {%- if param.is_primitive_array() %}
     (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
 {%- endif %}
 {%- if param.is_string %}
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
@@ -249,7 +285,7 @@ JNIEXPORT void JNICALL Java_{{ jni_prefix }}_Native_{{ prefix }}_1clear_1last_1e
     {{ prefix }}_clear_last_error();
 }
 
-JNIEXPORT void JNICALL Java_{{ jni_prefix }}_Native_{{ prefix }}_1free_1direct_1buffer(JNIEnv *env, jclass cls, jobject buffer) {
+JNIEXPORT void JNICALL Java_{{ jni_prefix }}_Native_{{ prefix }}_1free_1native_1buffer(JNIEnv *env, jclass cls, jobject buffer) {
     if (buffer) {
         void* ptr = (*env)->GetDirectBufferAddress(env, buffer);
         if (ptr) free(ptr);

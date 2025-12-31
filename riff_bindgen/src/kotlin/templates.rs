@@ -680,6 +680,11 @@ impl NativeTemplate {
                         .map(|p| NativeParamView {
                             name: NamingConvention::param_name(&p.name),
                             jni_type: match &p.param_type {
+                                Type::Vec(inner) | Type::Slice(inner)
+                                    if matches!(inner.as_ref(), Type::Record(_)) =>
+                                {
+                                    "ByteArray".to_string()
+                                }
                                 Type::Enum(enum_name)
                                     if module
                                         .enums
@@ -688,7 +693,7 @@ impl NativeTemplate {
                                         .map(|e| e.is_data_enum())
                                         .unwrap_or(false) =>
                                 {
-                                    "ByteBuffer".to_string()
+                                    "ByteArray".to_string()
                                 }
                                 _ => TypeMapper::jni_type(&p.param_type),
                             },
