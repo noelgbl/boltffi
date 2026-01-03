@@ -511,6 +511,22 @@ impl ResultView {
             _ => 0,
         }
     }
+
+    pub fn err_exception_name(&self) -> String {
+        match &self.err_kind {
+            ResultErrKind::Enum { name } | ResultErrKind::DataEnum { name, .. } => {
+                format!("{}Exception", name)
+            }
+            _ => "FfiException".to_string(),
+        }
+    }
+
+    pub fn err_codec_name(&self) -> String {
+        match &self.err_kind {
+            ResultErrKind::DataEnum { name, .. } => format!("{}Codec", name),
+            _ => String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

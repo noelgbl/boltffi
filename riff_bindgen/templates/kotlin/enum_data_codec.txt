@@ -1,4 +1,4 @@
-private object {{ codec_name }} {
+object {{ codec_name }} {
     const val STRUCT_SIZE = {{ struct_size }}
     private const val TAG_OFFSET = 0
     private const val PAYLOAD_OFFSET = {{ payload_offset }}

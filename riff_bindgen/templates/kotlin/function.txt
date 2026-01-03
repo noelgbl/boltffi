@@ -1,39 +1,51 @@
 {%- if let Some(res) = result %}
-@Throws(Exception::class)
+@Throws({{ res.err_exception_name() }}::class)
 {%- endif %}
 fun {{ func_name }}({% for param in params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% match return_type %}{% when Some with (ret) %}: {{ ret }}{% when None %}{% endmatch %} {
 {%- if let Some(res) = result %}
+    try {
 {%- if res.is_void() %}
-    Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
+        Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- else if res.is_string() %}
-    return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) ?: throw FfiException(-1, "Null string returned")
+        return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) ?: throw FfiException(-1, "Null string returned")
 {%- else if res.is_primitive() %}
-    return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
+        return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- else if res.is_record() %}
-    val buf = Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) ?: throw FfiException(-1, "Null buffer returned")
-    return useNativeBuffer(buf) { buffer ->
-        buffer.order(ByteOrder.nativeOrder())
-        {{ res.record_name() }}Reader.read(buffer, 0)
-    }
+        val buf = Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) ?: throw FfiException(-1, "Null buffer returned")
+        return useNativeBuffer(buf) { buffer ->
+            buffer.order(ByteOrder.nativeOrder())
+            {{ res.record_name() }}Reader.read(buffer, 0)
+        }
 {%- else if res.is_enum() %}
-    return {{ res.enum_name() }}.fromValue(Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}))
+        return {{ res.enum_name() }}.fromValue(Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}))
 {%- else if res.is_data_enum() %}
-    val buf = Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) ?: throw FfiException(-1, "Null buffer returned")
-    return useNativeBuffer(buf) { buffer ->
-        buffer.order(ByteOrder.nativeOrder())
-        {{ res.enum_name() }}Codec.read(buffer)
-    }
+        val buf = Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) ?: throw FfiException(-1, "Null buffer returned")
+        return useNativeBuffer(buf) { buffer ->
+            buffer.order(ByteOrder.nativeOrder())
+            {{ res.enum_name() }}Codec.read(buffer)
+        }
 {%- else if res.is_vec_primitive() %}
-    return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})?.toList() ?: throw FfiException(-1, "Null array returned")
+        return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})?.toList() ?: throw FfiException(-1, "Null array returned")
 {%- else if res.is_vec_record() %}
-    val buf = Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) ?: throw FfiException(-1, "Null buffer returned")
-    return useNativeBuffer(buf) { buffer ->
-        buffer.order(ByteOrder.nativeOrder())
-        {{ res.vec_record_name() }}Reader.readAll(buffer, buffer.capacity() / {{ res.vec_record_name() }}Reader.STRUCT_SIZE)
-    }
+        val buf = Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) ?: throw FfiException(-1, "Null buffer returned")
+        return useNativeBuffer(buf) { buffer ->
+            buffer.order(ByteOrder.nativeOrder())
+            {{ res.vec_record_name() }}Reader.readAll(buffer, buffer.capacity() / {{ res.vec_record_name() }}Reader.STRUCT_SIZE)
+        }
 {%- else %}
-    return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
+        return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
+    } catch (e: RiffException) {
+{%- if res.has_structured_error() %}
+{%- if res.err_is_data_enum() %}
+        throw {{ res.err_exception_name() }}({{ res.err_codec_name() }}.read(e.errorBuffer))
+{%- else %}
+        throw {{ res.err_exception_name() }}({{ res.err_enum_name() }}.fromValue(e.errorBuffer.getInt(0)))
+{%- endif %}
+{%- else %}
+        throw FfiException(-1, e.message ?: "Unknown error")
+{%- endif %}
+    }
 {%- else if return_kind.is_primitive() %}
     return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- else if return_kind.is_string() %}

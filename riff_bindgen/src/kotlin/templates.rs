@@ -818,6 +818,7 @@ impl NativeTemplate {
                     Type::Record(_) => (false, String::new(), "ByteBuffer".to_string()),
                     _ => (false, String::new(), "Long".to_string()),
                 },
+                Type::Result { ok, .. } => Self::analyze_result_return(ok, module),
                 Type::Enum(enum_name)
                     if module
                         .enums
@@ -830,6 +831,29 @@ impl NativeTemplate {
                 }
                 _ => (false, String::new(), TypeMapper::jni_type(ty)),
             },
+        }
+    }
+
+    fn analyze_result_return(ok: &Type, module: &Module) -> (bool, String, String) {
+        match ok {
+            Type::Void => (false, String::new(), "Unit".to_string()),
+            Type::Primitive(_) => (false, String::new(), TypeMapper::jni_type(ok)),
+            Type::String => (false, String::new(), "String?".to_string()),
+            Type::Record(_) => (false, String::new(), "ByteBuffer?".to_string()),
+            Type::Enum(enum_name) => {
+                let is_data_enum = module
+                    .enums
+                    .iter()
+                    .find(|e| &e.name == enum_name)
+                    .map(|e| e.is_data_enum())
+                    .unwrap_or(false);
+                if is_data_enum {
+                    (false, String::new(), "ByteBuffer?".to_string())
+                } else {
+                    (false, String::new(), "Int".to_string())
+                }
+            }
+            _ => (false, String::new(), TypeMapper::jni_type(ok)),
         }
     }
 }

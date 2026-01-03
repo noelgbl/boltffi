@@ -38,6 +38,10 @@ impl Kotlin {
             }
         });
 
+        Self::collect_result_error_enums(module).iter().for_each(|(enum_name, is_data_enum)| {
+            sections.push(Self::render_error_exception(enum_name, *is_data_enum));
+        });
+
         let blittable_vec_return_records = Self::find_blittable_vec_return_records(module);
         let blittable_vec_param_records = Self::find_blittable_vec_param_records(module);
 
@@ -259,6 +263,42 @@ impl Kotlin {
             .find(|record| record.name == record_name)
             .map(|record| record.is_blittable())
             .unwrap_or(false)
+    }
+
+    fn collect_result_error_enums(module: &Module) -> Vec<(String, bool)> {
+        let mut seen = std::collections::HashSet::new();
+        module
+            .functions
+            .iter()
+            .filter_map(|func| match &func.output {
+                Some(Type::Result { err, .. }) => match err.as_ref() {
+                    Type::Enum(name) => {
+                        let is_data = module
+                            .enums
+                            .iter()
+                            .find(|e| &e.name == name)
+                            .map(|e| e.is_data_enum())
+                            .unwrap_or(false);
+                        let kotlin_name = NamingConvention::class_name(name);
+                        if seen.insert(kotlin_name.clone()) {
+                            Some((kotlin_name, is_data))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn render_error_exception(enum_name: &str, is_data_enum: bool) -> String {
+        if is_data_enum {
+            format!("class {}Exception(val error: {}) : Exception()", enum_name, enum_name)
+        } else {
+            format!("class {}Exception(val error: {}) : Exception()", enum_name, enum_name)
+        }
     }
 }
 

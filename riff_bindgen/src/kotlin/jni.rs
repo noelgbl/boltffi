@@ -9,6 +9,7 @@ use crate::model::{Class, Function, Method, Module, Type};
 pub struct JniGlueTemplate {
     pub prefix: String,
     pub jni_prefix: String,
+    pub package_path: String,
     pub module_name: String,
     pub functions: Vec<JniFunctionView>,
     pub classes: Vec<JniClassView>,
@@ -140,6 +141,7 @@ impl JniGlueTemplate {
             .replace('_', "_1")
             .replace('.', "_")
             .replace('-', "_1");
+        let package_path = package.replace('.', "/");
 
         let functions: Vec<JniFunctionView> = module
             .functions
@@ -157,6 +159,7 @@ impl JniGlueTemplate {
         Self {
             prefix,
             jni_prefix,
+            package_path,
             module_name: module.name.clone(),
             functions,
             classes,

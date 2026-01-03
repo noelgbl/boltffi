@@ -283,7 +283,7 @@ JNIEXPORT {{ func.jni_return }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass 
         void* _err_buf = malloc({{ res.err_struct_size() }});
         if (_err_buf) {
             memcpy(_err_buf, _out_err, {{ res.err_struct_size() }});
-            jclass _exc_cls = (*env)->FindClass(env, "{{ jni_prefix }}/RiffException");
+            jclass _exc_cls = (*env)->FindClass(env, "{{ package_path }}/RiffException");
             if (_exc_cls) {
                 jmethodID _exc_ctor = (*env)->GetMethodID(env, _exc_cls, "<init>", "(Ljava/nio/ByteBuffer;)V");
                 if (_exc_ctor) {
@@ -382,7 +382,7 @@ JNIEXPORT {{ func.jni_return }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass 
         void* _err_buf = malloc({{ res.err_struct_size() }});
         if (_err_buf) {
             memcpy(_err_buf, _out_err, {{ res.err_struct_size() }});
-            jclass _exc_cls = (*env)->FindClass(env, "{{ jni_prefix }}/RiffException");
+            jclass _exc_cls = (*env)->FindClass(env, "{{ package_path }}/RiffException");
             if (_exc_cls) {
                 jmethodID _exc_ctor = (*env)->GetMethodID(env, _exc_cls, "<init>", "(Ljava/nio/ByteBuffer;)V");
                 if (_exc_ctor) {
