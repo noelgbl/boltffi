@@ -15,11 +15,24 @@ struct DataEnumVariantLayout {
 
 impl DataEnumLayout {
     pub fn from_enum(enumeration: &Enumeration) -> Option<Self> {
-        if enumeration.is_c_style() {
-            return None;
-        }
-
         let tag_layout = Primitive::I32.c_layout();
+
+        if enumeration.is_c_style() {
+            let variants: Vec<DataEnumVariantLayout> = enumeration
+                .variants
+                .iter()
+                .map(|_| DataEnumVariantLayout {
+                    field_offsets: Vec::new(),
+                    payload_layout: Layout::new(0, 1),
+                })
+                .collect();
+
+            return Some(Self {
+                struct_size: tag_layout.size,
+                payload_offset: Offset::ZERO + tag_layout.size,
+                variants,
+            });
+        }
 
         let variants: Vec<DataEnumVariantLayout> = enumeration
             .variants

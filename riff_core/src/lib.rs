@@ -10,7 +10,7 @@ pub mod types;
 pub use handle::HandleBox;
 pub use pending::{CancellationToken, PendingHandle};
 pub use riff_macros::{
-    Data, FfiType, data, export, ffi_class, ffi_export, ffi_stream, ffi_trait, name, skip,
+    Data, FfiType, data, error, export, ffi_class, ffi_export, ffi_stream, ffi_trait, name, skip,
 };
 pub use ringbuffer::SpscRingBuffer;
 pub use rustfuture::{
@@ -22,7 +22,7 @@ pub use subscription::{
     EventSubscription, StreamContinuationCallback, StreamPollResult, StreamProducer,
     SubscriptionHandle, WaitResult,
 };
-pub use types::{FfiBuf, FfiOption, FfiSlice, FfiString};
+pub use types::{FfiBuf, FfiError, FfiOption, FfiSlice, FfiString};
 
 pub const VERSION_MAJOR: u32 = 0;
 pub const VERSION_MINOR: u32 = 1;

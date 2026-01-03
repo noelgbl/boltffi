@@ -37,6 +37,7 @@ impl CHeaderGenerator {
 
 typedef struct {{ int32_t code; }} FfiStatus;
 typedef struct {{ uint8_t* ptr; size_t len; size_t cap; }} FfiString;
+typedef struct {{ FfiString message; }} FfiError;
 
 static inline bool {prefix}_atomic_u8_cas(uint8_t* state, uint8_t expected, uint8_t desired) {{
     return atomic_compare_exchange_strong_explicit((_Atomic uint8_t*)state, &expected, desired, memory_order_acq_rel, memory_order_acquire);
@@ -53,9 +54,6 @@ static inline bool {prefix}_atomic_u64_cas(uint64_t* slot, uint64_t expected, ui
 static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
     return atomic_load_explicit((_Atomic uint64_t*)slot, memory_order_acquire);
 }}
-
-FfiStatus {prefix}_last_error_message(FfiString* out);
-void {prefix}_clear_last_error(void);
 
 "#
         )
@@ -416,15 +414,27 @@ void {prefix}_clear_last_error(void);
     ) -> String {
         let params_str = Self::format_params(params);
         let result_type = Self::async_result_type(output);
+        let err_out_param = Self::async_error_out_param(output);
 
         format!(
             "RustFutureHandle {}({});\n\
              void {}_poll(RustFutureHandle handle, uint64_t callback_data, RustFutureContinuationCallback callback);\n\
-             {} {}_complete(RustFutureHandle handle, FfiStatus* out_status);\n\
+             {} {}_complete(RustFutureHandle handle, FfiStatus* out_status{});\n\
              void {}_cancel(RustFutureHandle handle);\n\
              void {}_free(RustFutureHandle handle);\n",
-            ffi_name, params_str, ffi_name, result_type, ffi_name, ffi_name, ffi_name
+            ffi_name, params_str, ffi_name, result_type, ffi_name, err_out_param, ffi_name, ffi_name
         )
+    }
+
+    fn async_error_out_param(output: &Option<Type>) -> String {
+        let Some(Type::Result { err, .. }) = output else {
+            return String::new();
+        };
+        match err.as_ref() {
+            Type::Enum(name) | Type::Record(name) => format!(", {}* out_err", name),
+            Type::String => ", FfiError* out_err".to_string(),
+            _ => String::new(),
+        }
     }
 
     fn generate_vec_return_function(
@@ -453,59 +463,51 @@ void {prefix}_clear_last_error(void);
         format!("FfiStatus {}({});\n", ffi_name, params_str)
     }
 
-    fn generate_result_return_function(
-        ffi_name: &str,
-        params: &[(String, String)],
-        ok_type: &Type,
-    ) -> String {
-        Self::generate_result_return_function_with_err(ffi_name, params, ok_type, None)
-    }
-
     fn generate_result_return_function_with_err(
         ffi_name: &str,
         params: &[(String, String)],
         ok_type: &Type,
         err_type: Option<&Type>,
     ) -> String {
-        let has_structured_error = err_type
-            .map(|e| matches!(e, Type::Record(_) | Type::Enum(_)))
-            .unwrap_or(false);
+        let err_out_type = err_type.and_then(Self::error_out_type);
 
         match ok_type {
             Type::Void => {
                 let mut new_params = params.to_vec();
-                if has_structured_error {
-                    if let Some(err) = err_type {
-                        new_params.push(("out_err".to_string(), format!("{} *", Self::type_to_c(err))));
-                    }
+                if let Some(err_type_str) = &err_out_type {
+                    new_params.push(("out_err".to_string(), format!("{} *", err_type_str)));
                 }
                 let params_str = Self::format_params(&new_params);
                 format!("FfiStatus {}({});\n", ffi_name, params_str)
             }
             Type::String => {
                 let mut new_params = params.to_vec();
-                let out_name = if has_structured_error { "out_ok" } else { "out" };
+                let out_name = if err_out_type.is_some() { "out_ok" } else { "out" };
                 new_params.push((out_name.to_string(), "FfiString *".to_string()));
-                if has_structured_error {
-                    if let Some(err) = err_type {
-                        new_params.push(("out_err".to_string(), format!("{} *", Self::type_to_c(err))));
-                    }
+                if let Some(err_type_str) = &err_out_type {
+                    new_params.push(("out_err".to_string(), format!("{} *", err_type_str)));
                 }
                 let params_str = Self::format_params(&new_params);
                 format!("FfiStatus {}({});\n", ffi_name, params_str)
             }
             _ => {
                 let mut new_params = params.to_vec();
-                let out_name = if has_structured_error { "out_ok" } else { "out" };
+                let out_name = if err_out_type.is_some() { "out_ok" } else { "out" };
                 new_params.push((out_name.to_string(), format!("{} *", Self::type_to_c(ok_type))));
-                if has_structured_error {
-                    if let Some(err) = err_type {
-                        new_params.push(("out_err".to_string(), format!("{} *", Self::type_to_c(err))));
-                    }
+                if let Some(err_type_str) = &err_out_type {
+                    new_params.push(("out_err".to_string(), format!("{} *", err_type_str)));
                 }
                 let params_str = Self::format_params(&new_params);
                 format!("FfiStatus {}({});\n", ffi_name, params_str)
             }
+        }
+    }
+
+    fn error_out_type(err: &Type) -> Option<String> {
+        match err {
+            Type::Enum(name) | Type::Record(name) => Some(name.clone()),
+            Type::String => Some("FfiError".to_string()),
+            _ => None,
         }
     }
 

@@ -9,6 +9,7 @@ pub struct Enumeration {
     pub variants: Vec<Variant>,
     pub doc: Option<String>,
     pub deprecated: Option<Deprecation>,
+    pub is_error: bool,
 }
 
 impl Enumeration {
@@ -18,7 +19,13 @@ impl Enumeration {
             variants: Vec::new(),
             doc: None,
             deprecated: None,
+            is_error: false,
         }
+    }
+
+    pub fn as_error(mut self) -> Self {
+        self.is_error = true;
+        self
     }
 
     pub fn with_variant(mut self, variant: Variant) -> Self {

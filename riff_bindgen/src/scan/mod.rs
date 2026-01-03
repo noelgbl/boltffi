@@ -79,6 +79,7 @@ struct ScannedRecord {
 struct ScannedEnum {
     name: String,
     variants: Vec<ScannedVariant>,
+    is_error: bool,
 }
 
 struct ScannedVariant {
@@ -158,10 +159,10 @@ impl SourceScanner {
                     }
                 }
                 Item::Enum(item_enum) => {
-                    if has_repr_int(&item_enum.attrs) {
-                        self.type_registry
-                            .register_enum(item_enum.ident.to_string());
-                    } else if has_attribute(&item_enum.attrs, "data") {
+                    if has_repr_int(&item_enum.attrs)
+                        || has_attribute(&item_enum.attrs, "data")
+                        || has_attribute(&item_enum.attrs, "error")
+                    {
                         self.type_registry
                             .register_enum(item_enum.ident.to_string());
                     }
@@ -221,8 +222,12 @@ impl SourceScanner {
                 }
             }
             Item::Enum(item_enum) => {
-                if has_repr_int(&item_enum.attrs) {
-                    self.process_enum(item_enum);
+                let is_error = has_attribute(&item_enum.attrs, "error");
+                if has_repr_int(&item_enum.attrs)
+                    || has_attribute(&item_enum.attrs, "data")
+                    || is_error
+                {
+                    self.process_enum(item_enum, is_error);
                 }
             }
             _ => {}
@@ -247,7 +252,7 @@ impl SourceScanner {
         self.records.push(ScannedRecord { name, fields });
     }
 
-    fn process_enum(&mut self, item_enum: &ItemEnum) {
+    fn process_enum(&mut self, item_enum: &ItemEnum, is_error: bool) {
         let name = item_enum.ident.to_string();
         let mut next_discriminant: i64 = 0;
 
@@ -293,7 +298,7 @@ impl SourceScanner {
             })
             .collect();
 
-        self.enums.push(ScannedEnum { name, variants });
+        self.enums.push(ScannedEnum { name, variants, is_error });
     }
 
     fn process_function(&mut self, item_fn: &syn::ItemFn) {
@@ -528,6 +533,9 @@ impl SourceScanner {
 
         for scanned_enum in self.enums {
             let mut e = Enumeration::new(&scanned_enum.name);
+            if scanned_enum.is_error {
+                e = e.as_error();
+            }
             for variant in scanned_enum.variants {
                 let mut v = Variant::new(&variant.name);
                 if let Some(d) = variant.discriminant {
