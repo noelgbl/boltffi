@@ -94,6 +94,7 @@ pub struct FunctionTemplate {
     pub prefix: String,
     pub func_name: String,
     pub ffi_name: String,
+    pub ffi_module_name: Option<String>,
     pub params: Vec<super::conversion::ParamInfo>,
     pub return_type: Option<String>,
     pub return_kind: super::marshal::ReturnKind,
@@ -177,10 +178,13 @@ impl FunctionTemplate {
         let structured_error = Self::extract_structured_error(&function.output, module);
         let result_ok_ffi_type = Self::extract_result_ok_ffi_type(&function.output, module);
 
+        let ffi_module_name = Some(NamingConvention::ffi_module_name(&module.name));
+
         Self {
             prefix: ffi_prefix,
             func_name: NamingConvention::method_name(&function.name),
             ffi_name,
+            ffi_module_name,
             params: params_info.params,
             return_type,
             return_kind,

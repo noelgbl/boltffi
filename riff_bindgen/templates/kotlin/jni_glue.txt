@@ -298,12 +298,14 @@ JNIEXPORT {{ func.jni_return }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass 
     free(_tmp);
     {{ prefix }}_free_string(_out_value);
     return _result;
-{%- else if opt.strategy.is_record() %}
+{%- else if opt.strategy.is_record() || opt.strategy.is_data_enum() %}
     if (!_is_some) return NULL;
     void* _buf = malloc({{ opt.strategy.struct_size() }});
     if (!_buf) return NULL;
     memcpy(_buf, &_out_value, {{ opt.strategy.struct_size() }});
     return (*env)->NewDirectByteBuffer(env, _buf, (jlong){{ opt.strategy.struct_size() }});
+{%- else if opt.strategy.is_enum() %}
+    return _is_some ? (jint)_out_value : (jint)-1;
 {%- endif %}
 {%- endif %}
 }

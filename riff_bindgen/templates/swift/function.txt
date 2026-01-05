@@ -315,14 +315,34 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
     if writtenCount < arr.count { arr.removeSubrange(writtenCount..<arr.count) }
     return arr
 {%- endif %}
-{%- else if return_kind.is_option_scalar() %}
-{%- if return_kind.is_option_string() %}
+{%- else if return_kind.is_option_string() %}
     var outValue = FfiString()
     let isSome = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outValue)
     if isSome == 0 { return nil }
     defer { {{ prefix }}_free_string(outValue) }
     return stringFromFfi(outValue)
-{%- else if let Some(inner) = return_kind.inner_type() %}
+{%- else if return_kind.is_option_enum() %}
+{%- if let Some(inner) = return_kind.inner_type() %}
+    var outValue: Int32 = 0
+    let isSome = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outValue)
+    return isSome != 0 ? {{ inner }}(fromC: outValue) : nil
+{%- endif %}
+{%- else if return_kind.is_option_data_enum() %}
+{%- if let Some(inner) = return_kind.inner_type() %}
+{%- if let Some(ffi_module) = ffi_module_name %}
+    var outValue = {{ ffi_module }}.{{ inner }}()
+    let isSome = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outValue)
+    return isSome != 0 ? {{ inner }}(fromC: outValue) : nil
+{%- endif %}
+{%- endif %}
+{%- else if return_kind.is_option_record() %}
+{%- if let Some(inner) = return_kind.inner_type() %}
+    var outValue: {{ inner }} = .init()
+    let isSome = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outValue)
+    return isSome != 0 ? outValue : nil
+{%- endif %}
+{%- else if return_kind.is_option_scalar() %}
+{%- if let Some(inner) = return_kind.inner_type() %}
     var outValue: {{ inner }} = .init()
     let isSome = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outValue)
     return isSome != 0 ? outValue : nil

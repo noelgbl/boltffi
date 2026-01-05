@@ -251,12 +251,7 @@ impl JniGlueTemplate {
         match inner {
             Type::Primitive(_) | Type::String => true,
             Type::Record(name) => Self::is_record_blittable(name, module),
-            Type::Enum(name) => module
-                .enums
-                .iter()
-                .find(|e| &e.name == name)
-                .map(|e| e.is_data_enum())
-                .unwrap_or(false),
+            Type::Enum(name) => module.enums.iter().any(|e| &e.name == name),
             Type::Vec(vec_inner) => match vec_inner.as_ref() {
                 Type::Primitive(_) => true,
                 Type::Record(name) => Self::is_record_blittable(name, module),

@@ -95,8 +95,8 @@ impl OptionView {
         );
         let c_out_type = Self::resolve_c_out_type(inner);
         let kotlin_native_type = Self::resolve_kotlin_native_type(&strategy, inner);
-        let reader_name = Self::resolve_reader_name(inner);
-        let codec_name = Self::resolve_codec_name(inner);
+        let reader_name = Self::resolve_reader_name(inner, &strategy);
+        let codec_name = Self::resolve_codec_name(inner, &strategy);
 
         Self {
             strategy,
@@ -129,9 +129,10 @@ impl OptionView {
         }
     }
 
-    fn resolve_reader_name(inner: &Type) -> Option<String> {
+    fn resolve_reader_name(inner: &Type, strategy: &OptionAbi) -> Option<String> {
         match inner {
             Type::Record(name) => Some(format!("{}Reader", NamingConvention::class_name(name))),
+            Type::Enum(name) if strategy.is_enum() => Some(NamingConvention::class_name(name)),
             Type::Vec(vec_inner) => match vec_inner.as_ref() {
                 Type::Record(name) => Some(format!("{}Reader", NamingConvention::class_name(name))),
                 _ => None,
@@ -140,9 +141,11 @@ impl OptionView {
         }
     }
 
-    fn resolve_codec_name(inner: &Type) -> Option<String> {
+    fn resolve_codec_name(inner: &Type, strategy: &OptionAbi) -> Option<String> {
         match inner {
-            Type::Enum(name) => Some(format!("{}Codec", NamingConvention::class_name(name))),
+            Type::Enum(name) if strategy.is_data_enum() => {
+                Some(format!("{}Codec", NamingConvention::class_name(name)))
+            }
             _ => None,
         }
     }
