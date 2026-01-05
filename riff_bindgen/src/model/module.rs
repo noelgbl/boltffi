@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::callback_trait::CallbackTrait;
 use super::class::Class;
+use super::enum_layout::DataEnumLayout;
 use super::enumeration::Enumeration;
 use super::function::Function;
 use super::record::Record;
@@ -90,5 +91,27 @@ impl Module {
 
     pub fn has_streams(&self) -> bool {
         self.classes.iter().any(|c| !c.streams.is_empty())
+    }
+
+    pub fn struct_size(&self, name: &str) -> usize {
+        self.records
+            .iter()
+            .find(|r| r.name == name)
+            .map(|r| r.struct_size().as_usize())
+            .or_else(|| {
+                self.enums
+                    .iter()
+                    .find(|e| e.name == name && e.is_data_enum())
+                    .and_then(|e| DataEnumLayout::from_enum(e))
+                    .map(|l| l.struct_size().as_usize())
+            })
+            .unwrap_or(0)
+    }
+
+    pub fn is_data_enum(&self, name: &str) -> bool {
+        self.enums
+            .iter()
+            .find(|e| e.name == name)
+            .is_some_and(|e| e.is_data_enum())
     }
 }

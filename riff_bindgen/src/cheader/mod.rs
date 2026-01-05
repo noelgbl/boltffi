@@ -396,9 +396,15 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
             Some(Type::Result { ok, err }) => {
                 Self::generate_result_return_function_with_err(ffi_name, params, ok, Some(err))
             }
-            Some(Type::Option(inner)) if inner.is_primitive() => {
-                Self::generate_option_return_function(ffi_name, params, inner)
-            }
+            Some(Type::Option(inner)) => match inner.as_ref() {
+                Type::Vec(vec_inner) => {
+                    Self::generate_option_vec_return_function(ffi_name, params, vec_inner)
+                }
+                Type::String => {
+                    Self::generate_option_string_return_function(ffi_name, params)
+                }
+                _ => Self::generate_option_return_function(ffi_name, params, inner),
+            },
             _ => {
                 let ret_type = Self::return_type_to_c(output);
                 let params_str = Self::format_params(params);
@@ -520,6 +526,36 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
         new_params.push(("out".to_string(), format!("{} *", Self::type_to_c(inner))));
         let params_str = Self::format_params(&new_params);
         format!("int32_t {}({});\n", ffi_name, params_str)
+    }
+
+    fn generate_option_string_return_function(ffi_name: &str, params: &[(String, String)]) -> String {
+        let mut new_params = params.to_vec();
+        new_params.push(("out".to_string(), "FfiString *".to_string()));
+        let params_str = Self::format_params(&new_params);
+        format!("int32_t {}({});\n", ffi_name, params_str)
+    }
+
+    fn generate_option_vec_return_function(
+        ffi_name: &str,
+        params: &[(String, String)],
+        inner: &Type,
+    ) -> String {
+        let inner_c = Self::type_to_c(inner);
+        let params_str = Self::format_params(params);
+
+        format!(
+            "int32_t {}_is_some({});\n\
+             uintptr_t {}_len({});\n\
+             FfiStatus {}_copy_into({}{}{} * dst, uintptr_t dst_cap, uintptr_t * written);\n",
+            ffi_name,
+            params_str,
+            ffi_name,
+            params_str,
+            ffi_name,
+            params_str,
+            if params.is_empty() { "" } else { ", " },
+            inner_c
+        )
     }
 
     fn generate_classes(classes: &[Class], prefix: &str) -> String {

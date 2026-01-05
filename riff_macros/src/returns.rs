@@ -1,6 +1,12 @@
 use quote::quote;
 use syn::{ReturnType, Type};
 
+pub enum OptionReturnAbi {
+    OutValue { inner: syn::Type },
+    OutFfiString,
+    Vec { inner: syn::Type },
+}
+
 pub enum ReturnKind {
     Unit,
     Primitive,
@@ -9,7 +15,7 @@ pub enum ReturnKind {
     ResultString { err: syn::Type },
     ResultUnit { err: syn::Type },
     Vec(syn::Type),
-    OptionPrimitive(syn::Type),
+    Option(OptionReturnAbi),
 }
 
 pub enum AsyncErrorKind {
@@ -54,6 +60,17 @@ pub fn extract_generic_inner(ty: &Type, wrapper: &str) -> Option<syn::Type> {
         return Some(inner_ty.clone());
     }
     None
+}
+
+fn is_string_like_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(path) => path.path.segments.last().is_some_and(|s| s.ident == "String"),
+        Type::Reference(reference) => match reference.elem.as_ref() {
+            Type::Path(path) => path.path.segments.last().is_some_and(|s| s.ident == "str"),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 pub fn is_primitive_type(s: &str) -> bool {
@@ -111,7 +128,17 @@ pub fn classify_return(output: &ReturnType) -> ReturnKind {
                     && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
                     && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
                 {
-                    return ReturnKind::OptionPrimitive(inner_ty.clone());
+                    if let Some(vec_inner) = extract_vec_inner(inner_ty) {
+                        return ReturnKind::Option(OptionReturnAbi::Vec { inner: vec_inner });
+                    }
+
+                    if is_string_like_type(inner_ty) {
+                        return ReturnKind::Option(OptionReturnAbi::OutFfiString);
+                    }
+
+                    return ReturnKind::Option(OptionReturnAbi::OutValue {
+                        inner: inner_ty.clone(),
+                    });
                 }
             }
 
