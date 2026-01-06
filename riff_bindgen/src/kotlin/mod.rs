@@ -230,8 +230,9 @@ impl Kotlin {
             Type::Record(name) => Self::is_record_blittable(name, module),
             Type::Enum(name) => module.enums.iter().any(|e| &e.name == name),
             Type::Vec(vec_inner) => match vec_inner.as_ref() {
-                Type::Primitive(_) => true,
+                Type::Primitive(_) | Type::String => true,
                 Type::Record(name) => Self::is_record_blittable(name, module),
+                Type::Enum(name) => module.enums.iter().any(|e| &e.name == name && !e.is_data_enum()),
                 _ => false,
             },
             _ => false,

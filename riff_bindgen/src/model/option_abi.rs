@@ -10,6 +10,9 @@ pub enum OptionAbi {
     DataEnum { struct_size: usize },
     VecPrimitive { primitive: Primitive },
     VecRecord { struct_size: usize },
+    VecString,
+    VecEnum,
+    VecDataEnum { struct_size: usize },
 }
 
 impl OptionAbi {
@@ -38,6 +41,16 @@ impl OptionAbi {
                 Type::Record(name) => Self::VecRecord {
                     struct_size: struct_size(name),
                 },
+                Type::String => Self::VecString,
+                Type::Enum(name) => {
+                    if is_data_enum(name) {
+                        Self::VecDataEnum {
+                            struct_size: struct_size(name),
+                        }
+                    } else {
+                        Self::VecEnum
+                    }
+                }
                 _ => Self::Packed {
                     primitive: Primitive::I32,
                 },
@@ -98,8 +111,27 @@ impl OptionAbi {
         matches!(self, Self::VecRecord { .. })
     }
 
+    pub fn is_vec_string(&self) -> bool {
+        matches!(self, Self::VecString)
+    }
+
+    pub fn is_vec_enum(&self) -> bool {
+        matches!(self, Self::VecEnum)
+    }
+
+    pub fn is_vec_data_enum(&self) -> bool {
+        matches!(self, Self::VecDataEnum { .. })
+    }
+
     pub fn is_vec(&self) -> bool {
-        matches!(self, Self::VecPrimitive { .. } | Self::VecRecord { .. })
+        matches!(
+            self,
+            Self::VecPrimitive { .. }
+                | Self::VecRecord { .. }
+                | Self::VecString
+                | Self::VecEnum
+                | Self::VecDataEnum { .. }
+        )
     }
 
     pub fn primitive(&self) -> Option<Primitive> {
@@ -113,7 +145,8 @@ impl OptionAbi {
         match self {
             Self::Record { struct_size }
             | Self::DataEnum { struct_size }
-            | Self::VecRecord { struct_size } => *struct_size,
+            | Self::VecRecord { struct_size }
+            | Self::VecDataEnum { struct_size } => *struct_size,
             _ => 0,
         }
     }

@@ -83,6 +83,12 @@ fun {{ func_name }}({% for param in params %}{{ param.name }}: {{ param.kotlin_t
     val value = Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
     return if (value >= 0) {{ enum_name }}.fromValue(value) else null
 {%- endif %}
+{%- else if opt.strategy.is_vec_string() %}
+    return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})?.toList()
+{%- else if opt.strategy.is_vec_enum() %}
+{%- if let Some(enum_name) = opt.reader_name %}
+    return Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})?.map { {{ enum_name }}.fromValue(it) }
+{%- endif %}
 {%- endif %}
 {%- else if return_kind.is_enum() %}
 {%- if enum_is_data %}

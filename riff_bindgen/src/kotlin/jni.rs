@@ -25,6 +25,18 @@ enum OptionVecReturnKind {
     None,
     Primitive(PrimitiveVecInfo),
     Record(RecordVecInfo),
+    VecString(VecStringInfo),
+    VecEnum(VecEnumInfo),
+}
+
+struct VecStringInfo {
+    len_ffi: String,
+    copy_ffi: String,
+}
+
+struct VecEnumInfo {
+    len_ffi: String,
+    copy_ffi: String,
 }
 
 struct PrimitiveVecInfo {
@@ -118,6 +130,18 @@ impl OptionVecReturnKind {
                     copy_ffi,
                     struct_size,
                 })
+            }
+            Type::String => Self::VecString(VecStringInfo { len_ffi, copy_ffi }),
+            Type::Enum(enum_name) => {
+                let is_data_enum = module
+                    .enums
+                    .iter()
+                    .any(|e| &e.name == enum_name && e.is_data_enum());
+                if is_data_enum {
+                    Self::None
+                } else {
+                    Self::VecEnum(VecEnumInfo { len_ffi, copy_ffi })
+                }
             }
             _ => Self::None,
         }
@@ -253,8 +277,9 @@ impl JniGlueTemplate {
             Type::Record(name) => Self::is_record_blittable(name, module),
             Type::Enum(name) => module.enums.iter().any(|e| &e.name == name),
             Type::Vec(vec_inner) => match vec_inner.as_ref() {
-                Type::Primitive(_) => true,
+                Type::Primitive(_) | Type::String => true,
                 Type::Record(name) => Self::is_record_blittable(name, module),
+                Type::Enum(name) => module.enums.iter().any(|e| &e.name == name && !e.is_data_enum()),
                 _ => false,
             },
             _ => false,
@@ -435,6 +460,8 @@ impl JniGlueTemplate {
         match vec_return {
             OptionVecReturnKind::Primitive(info) => info.len_ffi.clone(),
             OptionVecReturnKind::Record(info) => info.len_ffi.clone(),
+            OptionVecReturnKind::VecString(info) => info.len_ffi.clone(),
+            OptionVecReturnKind::VecEnum(info) => info.len_ffi.clone(),
             OptionVecReturnKind::None => String::new(),
         }
     }
@@ -443,6 +470,8 @@ impl JniGlueTemplate {
         match vec_return {
             OptionVecReturnKind::Primitive(info) => info.copy_ffi.clone(),
             OptionVecReturnKind::Record(info) => info.copy_ffi.clone(),
+            OptionVecReturnKind::VecString(info) => info.copy_ffi.clone(),
+            OptionVecReturnKind::VecEnum(info) => info.copy_ffi.clone(),
             OptionVecReturnKind::None => String::new(),
         }
     }

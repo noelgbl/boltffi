@@ -264,6 +264,132 @@ JNIEXPORT {{ func.jni_return }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass 
 {%- endif %}
 {%- endfor %}
     return _result;
+{%- else if opt.strategy.is_vec_string() %}
+    int32_t _is_some = {{ func.ffi_name }}_is_some({% for param in func.params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+    if (!_is_some) {
+{%- for param in func.params %}
+{%- if param.is_primitive_array() %}
+        (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+        (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+        (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_string %}
+        if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
+{%- endif %}
+{%- endfor %}
+        return NULL;
+    }
+    uintptr_t _len = {{ func.option_vec_len_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+    FfiString* _strings = (FfiString*)malloc(_len * sizeof(FfiString));
+    if (!_strings) {
+{%- for param in func.params %}
+{%- if param.is_primitive_array() %}
+        (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+        (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+        (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_string %}
+        if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
+{%- endif %}
+{%- endfor %}
+        return NULL;
+    }
+    uintptr_t _written = 0;
+    {{ func.option_vec_copy_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}, {% endfor %}_strings, _len, &_written);
+{%- for param in func.params %}
+{%- if param.is_primitive_array() %}
+    (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_string %}
+    if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
+{%- endif %}
+{%- endfor %}
+    jclass _str_cls = (*env)->FindClass(env, "java/lang/String");
+    jobjectArray _result = (*env)->NewObjectArray(env, (jsize)_written, _str_cls, NULL);
+    for (uintptr_t i = 0; i < _written; i++) {
+        char* _tmp = (char*)malloc(_strings[i].len + 1);
+        if (_tmp) {
+            memcpy(_tmp, _strings[i].ptr, _strings[i].len);
+            _tmp[_strings[i].len] = '\0';
+            jstring _jstr = (*env)->NewStringUTF(env, _tmp);
+            (*env)->SetObjectArrayElement(env, _result, (jsize)i, _jstr);
+            free(_tmp);
+        }
+        {{ prefix }}_free_string(_strings[i]);
+    }
+    free(_strings);
+    return _result;
+{%- else if opt.strategy.is_vec_enum() %}
+    int32_t _is_some = {{ func.ffi_name }}_is_some({% for param in func.params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+    if (!_is_some) {
+{%- for param in func.params %}
+{%- if param.is_primitive_array() %}
+        (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+        (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+        (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_string %}
+        if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
+{%- endif %}
+{%- endfor %}
+        return NULL;
+    }
+    uintptr_t _len = {{ func.option_vec_len_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+    jintArray _result = (*env)->NewIntArray(env, (jsize)_len);
+    if (!_result) {
+{%- for param in func.params %}
+{%- if param.is_primitive_array() %}
+        (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+        (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+        (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_string %}
+        if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
+{%- endif %}
+{%- endfor %}
+        return NULL;
+    }
+    int32_t* _dst = (int32_t*)(*env)->GetPrimitiveArrayCritical(env, _result, NULL);
+    uintptr_t _written = 0;
+    {{ func.option_vec_copy_ffi }}({% for param in func.params %}{{ param.ffi_arg() }}, {% endfor %}_dst, (uintptr_t)_len, &_written);
+    (*env)->ReleasePrimitiveArrayCritical(env, _result, _dst, 0);
+{%- for param in func.params %}
+{%- if param.is_primitive_array() %}
+    (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
+{%- endif %}
+{%- if param.is_record_buffer() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_data_enum() %}
+    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, _{{ param.name }}_ptr, JNI_ABORT);
+{%- endif %}
+{%- if param.is_string %}
+    if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
+{%- endif %}
+{%- endfor %}
+    return _result;
 {%- else %}
     {{ opt.c_out_type }} _out_value = {0};
     int32_t _is_some = {{ func.ffi_name }}({% for param in func.params %}{{ param.ffi_arg() }}, {% endfor %}&_out_value);

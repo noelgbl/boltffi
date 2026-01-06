@@ -34,9 +34,14 @@ impl OptionAbiKotlin for OptionAbi {
             Self::Packed { .. } => "jlong",
             Self::Primitive { .. } => "jobject",
             Self::String => "jstring",
-            Self::Record { .. } | Self::DataEnum { .. } | Self::VecRecord { .. } => "jobject",
+            Self::Record { .. }
+            | Self::DataEnum { .. }
+            | Self::VecRecord { .. }
+            | Self::VecDataEnum { .. } => "jobject",
             Self::Enum => "jint",
             Self::VecPrimitive { primitive } => primitive.jni_array_type(),
+            Self::VecString => "jobjectArray",
+            Self::VecEnum => "jintArray",
         }
     }
 
@@ -125,7 +130,9 @@ impl OptionView {
             OptionAbi::Record { .. } | OptionAbi::DataEnum { .. } => "ByteBuffer?".to_string(),
             OptionAbi::Enum => "Int".to_string(),
             OptionAbi::VecPrimitive { .. } => format!("{}?", TypeMapper::jni_type(inner)),
-            OptionAbi::VecRecord { .. } => "ByteBuffer?".to_string(),
+            OptionAbi::VecRecord { .. } | OptionAbi::VecDataEnum { .. } => "ByteBuffer?".to_string(),
+            OptionAbi::VecString => "Array<String>?".to_string(),
+            OptionAbi::VecEnum => "IntArray?".to_string(),
         }
     }
 
@@ -135,6 +142,9 @@ impl OptionView {
             Type::Enum(name) if strategy.is_enum() => Some(NamingConvention::class_name(name)),
             Type::Vec(vec_inner) => match vec_inner.as_ref() {
                 Type::Record(name) => Some(format!("{}Reader", NamingConvention::class_name(name))),
+                Type::Enum(name) if strategy.is_vec_enum() => {
+                    Some(NamingConvention::class_name(name))
+                }
                 _ => None,
             },
             _ => None,
