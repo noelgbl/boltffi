@@ -659,13 +659,20 @@ pub struct ConstructorView {
 
 pub struct MethodView {
     pub name: String,
+    pub ffi_name: String,
     pub params: Vec<ParamView>,
     pub return_type: Option<String>,
     pub body: String,
+    pub is_async: bool,
+    pub ffi_poll: String,
+    pub ffi_complete: String,
+    pub ffi_cancel: String,
+    pub ffi_free: String,
+    pub complete_expr: String,
 }
 
 impl ClassTemplate {
-    pub fn from_class(class: &Class) -> Self {
+    pub fn from_class(class: &Class, module: &Module) -> Self {
         let class_name = NamingConvention::class_name(&class.name);
         let ffi_prefix = naming::class_ffi_prefix(&class.name);
 
@@ -697,14 +704,20 @@ impl ClassTemplate {
         let methods: Vec<MethodView> = class
             .methods
             .iter()
-            .filter(|method| Self::is_supported_method(method))
+            .filter(|method| Self::is_supported_method(method, module))
             .map(|method| {
                 let method_ffi = naming::method_ffi_name(&class.name, &method.name);
                 let return_type = method.output.as_ref().map(TypeMapper::map_type);
                 let body = Self::generate_method_body(method, &method_ffi);
+                let complete_expr = if method.is_async {
+                    Self::generate_async_complete_expr(&method.output, &method.name, &class.name)
+                } else {
+                    String::new()
+                };
 
                 MethodView {
                     name: NamingConvention::method_name(&method.name),
+                    ffi_name: method_ffi.clone(),
                     params: method
                         .inputs
                         .iter()
@@ -719,6 +732,12 @@ impl ClassTemplate {
                         .collect(),
                     return_type,
                     body,
+                    is_async: method.is_async,
+                    ffi_poll: naming::method_ffi_poll(&class.name, &method.name),
+                    ffi_complete: naming::method_ffi_complete(&class.name, &method.name),
+                    ffi_cancel: naming::method_ffi_cancel(&class.name, &method.name),
+                    ffi_free: naming::method_ffi_free(&class.name, &method.name),
+                    complete_expr,
                 }
             })
             .collect();
@@ -732,11 +751,15 @@ impl ClassTemplate {
         }
     }
 
-    fn is_supported_method(method: &crate::model::Method) -> bool {
-        let supported_output = match &method.output {
-            None => true,
-            Some(Type::Primitive(_)) => true,
-            _ => false,
+    fn is_supported_method(method: &crate::model::Method, module: &Module) -> bool {
+        let supported_output = if method.is_async {
+            super::Kotlin::is_supported_async_output(&method.output, module)
+        } else {
+            match &method.output {
+                None => true,
+                Some(Type::Primitive(_)) => true,
+                _ => false,
+            }
         };
 
         let supported_inputs = method
@@ -769,6 +792,34 @@ impl ClassTemplate {
             }
             Some(_) => format!("return Native.{}({})", ffi_name, args),
             None => format!("Native.{}({})", ffi_name, args),
+        }
+    }
+
+    fn generate_async_complete_expr(output: &Option<Type>, method_name: &str, class_name: &str) -> String {
+        let ffi_complete = naming::method_ffi_complete(class_name, method_name);
+        let call = format!("Native.{}(handle, future)", ffi_complete);
+
+        match output {
+            Some(Type::Result { ok, .. }) => match ok.as_ref() {
+                Type::Void => call,
+                Type::Primitive(p) => match p {
+                    crate::model::Primitive::U8 => format!("{}.toUByte()", call),
+                    crate::model::Primitive::U16 => format!("{}.toUShort()", call),
+                    crate::model::Primitive::U32 => format!("{}.toUInt()", call),
+                    crate::model::Primitive::U64 => format!("{}.toULong()", call),
+                    _ => call,
+                },
+                _ => call,
+            },
+            Some(Type::Primitive(p)) => match p {
+                crate::model::Primitive::U8 => format!("{}.toUByte()", call),
+                crate::model::Primitive::U16 => format!("{}.toUShort()", call),
+                crate::model::Primitive::U32 => format!("{}.toUInt()", call),
+                crate::model::Primitive::U64 => format!("{}.toULong()", call),
+                _ => call,
+            },
+            Some(Type::Void) | None => call,
+            _ => call,
         }
     }
 }
@@ -814,6 +865,11 @@ pub struct NativeMethodView {
     pub has_out_param: bool,
     pub out_type: String,
     pub return_jni_type: String,
+    pub is_async: bool,
+    pub ffi_poll: String,
+    pub ffi_complete: String,
+    pub ffi_cancel: String,
+    pub ffi_free: String,
 }
 
 impl NativeTemplate {
@@ -893,10 +949,14 @@ impl NativeTemplate {
                     .methods
                     .iter()
                     .filter(|method| {
-                        let supported_output = match &method.output {
-                            None => true,
-                            Some(Type::Primitive(_)) => true,
-                            _ => false,
+                        let supported_output = if method.is_async {
+                            super::Kotlin::is_supported_async_output(&method.output, module)
+                        } else {
+                            match &method.output {
+                                None => true,
+                                Some(Type::Primitive(_)) => true,
+                                _ => false,
+                            }
                         };
 
                         let supported_inputs = method
@@ -912,7 +972,7 @@ impl NativeTemplate {
                             Self::analyze_return(&method.output, module);
 
                         NativeMethodView {
-                            ffi_name: method_ffi,
+                            ffi_name: method_ffi.clone(),
                             params: method
                                 .inputs
                                 .iter()
@@ -924,6 +984,11 @@ impl NativeTemplate {
                             has_out_param,
                             out_type,
                             return_jni_type,
+                            is_async: method.is_async,
+                            ffi_poll: naming::method_ffi_poll(&class.name, &method.name),
+                            ffi_complete: naming::method_ffi_complete(&class.name, &method.name),
+                            ffi_cancel: naming::method_ffi_cancel(&class.name, &method.name),
+                            ffi_free: naming::method_ffi_free(&class.name, &method.name),
                         }
                     })
                     .collect();

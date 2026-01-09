@@ -1057,6 +1057,147 @@ JNIEXPORT {{ method.jni_return }} JNICALL {{ method.jni_name }}(JNIEnv *env, jcl
 {%- endif %}
 }
 {%- endfor %}
+
+{%- for func in class.async_methods %}
+
+JNIEXPORT jlong JNICALL {{ func.jni_create_name }}(JNIEnv *env, jclass cls, jlong handle{{ func.jni_params }}) {
+    if (handle == 0) return 0;
+{%- for param in func.params %}
+{%- if param.is_string %}
+    const char* _{{ param.name }}_c = {{ param.name }} ? (*env)->GetStringUTFChars(env, {{ param.name }}, NULL) : NULL;
+{%- endif %}
+{%- endfor %}
+    RustFutureHandle _handle = {{ func.ffi_name }}((void*)handle{% for param in func.params %}, {{ param.ffi_arg() }}{% endfor %});
+{%- for param in func.params %}
+{%- if param.is_string %}
+    if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
+{%- endif %}
+{%- endfor %}
+    return (jlong)_handle;
+}
+
+JNIEXPORT void JNICALL {{ func.jni_poll_name }}(JNIEnv *env, jclass cls, jlong handle, jlong future, jlong contHandle) {
+    {{ func.ffi_poll }}((RustFutureHandle)future, (uint64_t)contHandle, riff_jni_continuation_callback);
+}
+
+JNIEXPORT {{ func.jni_complete_return }} JNICALL {{ func.jni_complete_name }}(JNIEnv *env, jclass cls, jlong handle, jlong future) {
+{%- if func.complete_is_void %}
+    FfiStatus _status;
+    {{ func.ffi_complete }}((RustFutureHandle)future, &_status);
+{%- else if func.complete_is_string %}
+    FfiStatus _status;
+    FfiString _out = {{ func.ffi_complete }}((RustFutureHandle)future, &_status);
+    if (_status.code != 0 || _out.ptr == NULL) return NULL;
+    char* _tmp = (char*)malloc(_out.len + 1);
+    if (!_tmp) { {{ prefix }}_free_string(_out); return NULL; }
+    memcpy(_tmp, _out.ptr, _out.len);
+    _tmp[_out.len] = '\0';
+    jstring _result = (*env)->NewStringUTF(env, _tmp);
+    free(_tmp);
+    {{ prefix }}_free_string(_out);
+    return _result;
+{%- else if func.complete_is_vec %}
+    FfiStatus _status;
+    {{ func.vec_buf_type }} _buf = {{ func.ffi_complete }}((RustFutureHandle)future, &_status);
+    if (_status.code != 0 || _buf.ptr == NULL) return NULL;
+    {{ func.vec_jni_array_type }} _result = (*env)->{{ func.vec_new_array_fn }}(env, (jsize)_buf.len);
+    if (_result) {
+        (*env)->{{ func.vec_set_array_fn }}(env, _result, 0, (jsize)_buf.len, (const {{ func.vec_jni_element_type }}*)_buf.ptr);
+    }
+    {{ func.vec_free_fn }}(_buf);
+    return _result;
+{%- else if func.complete_is_record %}
+    FfiStatus _status;
+    {{ func.record_c_type }} _out = {{ func.ffi_complete }}((RustFutureHandle)future, &_status);
+    if (_status.code != 0) return NULL;
+    void* _buf = malloc({{ func.record_struct_size }});
+    if (!_buf) return NULL;
+    memcpy(_buf, &_out, {{ func.record_struct_size }});
+    return (*env)->NewDirectByteBuffer(env, _buf, (jlong){{ func.record_struct_size }});
+{%- else if func.complete_is_result %}
+{%- if func.result_err_is_string %}
+    FfiError _out_err = {0};
+{%- else %}
+    uint8_t _out_err[{{ func.result_err_struct_size }}];
+    memset(_out_err, 0, {{ func.result_err_struct_size }});
+{%- endif %}
+    FfiStatus _status;
+{%- if func.result_ok_is_void %}
+    {{ func.ffi_complete }}((RustFutureHandle)future, &_status, (void*)&_out_err);
+{%- else if func.result_ok_is_string %}
+    FfiString _out = {{ func.ffi_complete }}((RustFutureHandle)future, &_status, (void*)&_out_err);
+{%- else %}
+    {{ func.result_ok_c_type }} _out = {{ func.ffi_complete }}((RustFutureHandle)future, &_status, (void*)&_out_err);
+{%- endif %}
+    if (_status.code != 0) {
+{%- if func.result_err_is_string %}
+        FfiString* _err_str = (FfiString*)&_out_err;
+        jclass _exc_cls = (*env)->FindClass(env, "java/lang/Exception");
+        if (_exc_cls && _err_str->ptr) {
+            char* _err_tmp = (char*)malloc(_err_str->len + 1);
+            if (_err_tmp) {
+                memcpy(_err_tmp, _err_str->ptr, _err_str->len);
+                _err_tmp[_err_str->len] = '\0';
+                (*env)->ThrowNew(env, _exc_cls, _err_tmp);
+                free(_err_tmp);
+            }
+            {{ prefix }}_free_string(*_err_str);
+        }
+{%- else %}
+        void* _err_buf = malloc({{ func.result_err_struct_size }});
+        if (_err_buf) {
+            memcpy(_err_buf, _out_err, {{ func.result_err_struct_size }});
+            jclass _exc_cls = (*env)->FindClass(env, "{{ package_path }}/RiffException");
+            if (_exc_cls) {
+                jmethodID _exc_ctor = (*env)->GetMethodID(env, _exc_cls, "<init>", "(Ljava/nio/ByteBuffer;)V");
+                if (_exc_ctor) {
+                    jobject _err_bb = (*env)->NewDirectByteBuffer(env, _err_buf, (jlong){{ func.result_err_struct_size }});
+                    jobject _exc = (*env)->NewObject(env, _exc_cls, _exc_ctor, _err_bb);
+                    if (_exc) (*env)->Throw(env, (jthrowable)_exc);
+                } else {
+                    free(_err_buf);
+                }
+            } else {
+                free(_err_buf);
+            }
+        }
+{%- endif %}
+{%- if func.result_ok_is_void %}
+        return;
+{%- else if func.result_ok_is_string %}
+        return NULL;
+{%- else %}
+        return 0;
+{%- endif %}
+    }
+{%- if func.result_ok_is_void %}
+{%- else if func.result_ok_is_string %}
+    char* _tmp = (char*)malloc(_out.len + 1);
+    if (!_tmp) { {{ prefix }}_free_string(_out); return NULL; }
+    memcpy(_tmp, _out.ptr, _out.len);
+    _tmp[_out.len] = '\0';
+    jstring _result = (*env)->NewStringUTF(env, _tmp);
+    free(_tmp);
+    {{ prefix }}_free_string(_out);
+    return _result;
+{%- else %}
+    return ({{ func.result_ok_jni_type }})_out;
+{%- endif %}
+{%- else %}
+    FfiStatus _status;
+    {{ func.jni_complete_c_type }} _result = {{ func.ffi_complete }}((RustFutureHandle)future, &_status);
+    return ({{ func.jni_complete_return }})_result;
+{%- endif %}
+}
+
+JNIEXPORT void JNICALL {{ func.jni_cancel_name }}(JNIEnv *env, jclass cls, jlong handle, jlong future) {
+    {{ func.ffi_cancel }}((RustFutureHandle)future);
+}
+
+JNIEXPORT void JNICALL {{ func.jni_free_name }}(JNIEnv *env, jclass cls, jlong handle, jlong future) {
+    {{ func.ffi_free }}((RustFutureHandle)future);
+}
+{%- endfor %}
 {%- endfor %}
 
 {%- for func in async_functions %}

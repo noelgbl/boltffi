@@ -242,6 +242,7 @@ pub struct JniClassView {
     pub jni_prefix: String,
     pub constructors: Vec<JniCtorView>,
     pub methods: Vec<JniMethodView>,
+    pub async_methods: Vec<JniAsyncFunctionView>,
 }
 
 pub struct JniCtorView {
@@ -292,13 +293,14 @@ impl JniGlueTemplate {
             .map(|func| Self::map_async_function(func, &jni_prefix, module))
             .collect();
 
-        let has_async = !async_functions.is_empty();
-
         let classes: Vec<JniClassView> = module
             .classes
             .iter()
-            .map(|c| Self::map_class(c, &prefix, &jni_prefix))
+            .map(|c| Self::map_class(c, &prefix, &jni_prefix, module))
             .collect();
+
+        let has_async = !async_functions.is_empty()
+            || classes.iter().any(|c| !c.async_methods.is_empty());
 
         let class_name = NamingConvention::class_name(&module.name);
 
@@ -566,7 +568,11 @@ impl JniGlueTemplate {
             .unwrap_or(false)
     }
 
-    fn is_supported_method(method: &Method) -> bool {
+    fn is_supported_sync_method(method: &Method) -> bool {
+        if method.is_async {
+            return false;
+        }
+
         let supported_output = match &method.output {
             None => true,
             Some(Type::Primitive(_)) => true,
@@ -579,6 +585,18 @@ impl JniGlueTemplate {
             .all(|p| matches!(&p.param_type, Type::Primitive(_)));
 
         supported_output && supported_inputs
+    }
+
+    fn is_supported_async_method(method: &Method, module: &Module) -> bool {
+        if !method.is_async {
+            return false;
+        }
+
+        super::Kotlin::is_supported_async_output(&method.output, module)
+            && method
+                .inputs
+                .iter()
+                .all(|p| matches!(&p.param_type, Type::Primitive(_) | Type::String))
     }
 
     fn map_function(
@@ -760,7 +778,7 @@ impl JniGlueTemplate {
         }
     }
 
-    fn map_class(class: &Class, _prefix: &str, jni_prefix: &str) -> JniClassView {
+    fn map_class(class: &Class, _prefix: &str, jni_prefix: &str, module: &Module) -> JniClassView {
         let ffi_prefix = naming::class_ffi_prefix(&class.name);
 
         let constructors: Vec<JniCtorView> = class
@@ -802,7 +820,7 @@ impl JniGlueTemplate {
         let methods: Vec<JniMethodView> = class
             .methods
             .iter()
-            .filter(|m| Self::is_supported_method(m))
+            .filter(|m| Self::is_supported_sync_method(m))
             .map(|method| {
                 let ffi_name = naming::method_ffi_name(&class.name, &method.name);
                 let jni_name =
@@ -837,12 +855,195 @@ impl JniGlueTemplate {
             })
             .collect();
 
+        let async_methods: Vec<JniAsyncFunctionView> = class
+            .methods
+            .iter()
+            .filter(|m| Self::is_supported_async_method(m, module))
+            .map(|method| Self::map_async_method(&class.name, method, jni_prefix, module))
+            .collect();
+
         JniClassView {
             ffi_prefix: ffi_prefix.clone(),
             jni_ffi_prefix: ffi_prefix.replace('_', "_1"),
             jni_prefix: jni_prefix.to_string(),
             constructors,
             methods,
+            async_methods,
+        }
+    }
+
+    fn map_async_method(
+        class_name: &str,
+        method: &Method,
+        jni_prefix: &str,
+        module: &Module,
+    ) -> JniAsyncFunctionView {
+        let ffi_name = naming::method_ffi_name(class_name, &method.name);
+        let jni_func_name = ffi_name.replace('_', "_1");
+
+        let params: Vec<JniParamInfo> = method
+            .inputs
+            .iter()
+            .map(|p| JniParamInfo::from_param(&p.name, &p.param_type))
+            .collect();
+
+        let jni_params = if params.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ", {}",
+                params
+                    .iter()
+                    .map(|p| format!("{} {}", p.jni_type, p.name.clone()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+
+        let vec_primitive = method.output.as_ref().and_then(|t| match t {
+            Type::Vec(inner) => match inner.as_ref() {
+                Type::Primitive(p) => Some(*p),
+                _ => None,
+            },
+            _ => None,
+        });
+
+        let complete_is_vec = vec_primitive.is_some();
+        let (
+            vec_buf_type,
+            vec_free_fn,
+            vec_jni_array_type,
+            vec_new_array_fn,
+            vec_set_array_fn,
+            vec_jni_element_type,
+        ) = vec_primitive
+            .map(|p| {
+                (
+                    p.ffi_buf_type().to_string(),
+                    format!("{}_free_buf_{}", naming::ffi_prefix(), p.rust_name()),
+                    p.jni_array_type().to_string(),
+                    p.jni_new_array_fn().to_string(),
+                    p.jni_set_array_fn().to_string(),
+                    p.jni_element_type().to_string(),
+                )
+            })
+            .unwrap_or_default();
+
+        let record_info = method.output.as_ref().and_then(|t| match t {
+            Type::Record(name) => module
+                .records
+                .iter()
+                .find(|r| &r.name == name)
+                .map(|r| (name.clone(), r.layout().total_size().as_usize())),
+            _ => None,
+        });
+
+        let complete_is_record = record_info.is_some();
+        let (record_c_type, record_struct_size) = record_info.unwrap_or_default();
+
+        let result_info = method.output.as_ref().and_then(|t| match t {
+            Type::Result { ok, err } => Some((ok.as_ref().clone(), err.as_ref().clone())),
+            _ => None,
+        });
+
+        let complete_is_result = result_info.is_some();
+        let (result_ok_is_void, result_ok_is_string, result_ok_c_type, result_ok_jni_type) =
+            result_info
+                .as_ref()
+                .map(|(ok, _)| match ok {
+                    Type::Void => (true, false, "void".to_string(), "void".to_string()),
+                    Type::String => (false, true, "FfiString".to_string(), "jstring".to_string()),
+                    Type::Primitive(p) => (
+                        false,
+                        false,
+                        p.c_type_name().to_string(),
+                        TypeMapper::c_jni_type(&Type::Primitive(*p)),
+                    ),
+                    _ => (false, false, String::new(), String::new()),
+                })
+                .unwrap_or_default();
+
+        let (result_err_is_string, result_err_struct_size) = result_info
+            .as_ref()
+            .map(|(_, err)| match err {
+                Type::String => (true, 0usize),
+                Type::Enum(name) => {
+                    let enum_def = module.enums.iter().find(|e| &e.name == name);
+                    let struct_size = enum_def
+                        .and_then(DataEnumLayout::from_enum)
+                        .map(|l| l.struct_size().as_usize())
+                        .unwrap_or(4);
+                    (false, struct_size)
+                }
+                _ => (false, 0),
+            })
+            .unwrap_or_default();
+
+        let (jni_complete_return, jni_complete_c_type, complete_is_void, complete_is_string) =
+            match &method.output {
+                None | Some(Type::Void) => ("void".to_string(), "void".to_string(), true, false),
+                Some(Type::String) => ("jstring".to_string(), "FfiString".to_string(), false, true),
+                Some(Type::Primitive(p)) => (
+                    TypeMapper::c_jni_type(&Type::Primitive(*p)),
+                    p.c_type_name().to_string(),
+                    false,
+                    false,
+                ),
+                Some(Type::Vec(inner)) => match inner.as_ref() {
+                    Type::Primitive(p) => (
+                        p.jni_array_type().to_string(),
+                        p.ffi_buf_type().to_string(),
+                        false,
+                        false,
+                    ),
+                    _ => ("jlong".to_string(), "int64_t".to_string(), false, false),
+                },
+                Some(Type::Record(_)) => {
+                    ("jobject".to_string(), record_c_type.clone(), false, false)
+                }
+                Some(Type::Result { .. }) => (
+                    result_ok_jni_type.clone(),
+                    result_ok_c_type.clone(),
+                    result_ok_is_void,
+                    result_ok_is_string,
+                ),
+                _ => ("jlong".to_string(), "int64_t".to_string(), false, false),
+            };
+
+        JniAsyncFunctionView {
+            ffi_name: ffi_name.clone(),
+            ffi_poll: naming::method_ffi_poll(class_name, &method.name),
+            ffi_complete: naming::method_ffi_complete(class_name, &method.name),
+            ffi_cancel: naming::method_ffi_cancel(class_name, &method.name),
+            ffi_free: naming::method_ffi_free(class_name, &method.name),
+            jni_create_name: format!("Java_{}_Native_{}", jni_prefix, jni_func_name),
+            jni_poll_name: format!("Java_{}_Native_{}_1poll", jni_prefix, jni_func_name),
+            jni_complete_name: format!("Java_{}_Native_{}_1complete", jni_prefix, jni_func_name),
+            jni_cancel_name: format!("Java_{}_Native_{}_1cancel", jni_prefix, jni_func_name),
+            jni_free_name: format!("Java_{}_Native_{}_1free", jni_prefix, jni_func_name),
+            jni_params,
+            jni_complete_return,
+            jni_complete_c_type,
+            complete_is_void,
+            complete_is_string,
+            complete_is_vec,
+            complete_is_record,
+            complete_is_result,
+            vec_buf_type,
+            vec_free_fn,
+            vec_jni_array_type,
+            vec_new_array_fn,
+            vec_set_array_fn,
+            vec_jni_element_type,
+            record_c_type,
+            record_struct_size,
+            result_ok_is_void,
+            result_ok_is_string,
+            result_ok_c_type,
+            result_ok_jni_type,
+            result_err_is_string,
+            result_err_struct_size,
+            params,
         }
     }
 }

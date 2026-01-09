@@ -715,18 +715,20 @@ pub struct AsyncThrowingMethodBodyTemplate {
     pub ffi_complete: String,
     pub ffi_cancel: String,
     pub ffi_free: String,
+    pub ffi_module: String,
     pub args: Vec<String>,
     pub return_type: String,
 }
 
 impl AsyncThrowingMethodBodyTemplate {
-    pub fn from_method(method: &Method, class: &Class, _module: &Module) -> Self {
+    pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
         Self {
             ffi_name: naming::method_ffi_name(&class.name, &method.name),
             ffi_poll: naming::method_ffi_poll(&class.name, &method.name),
             ffi_complete: naming::method_ffi_complete(&class.name, &method.name),
             ffi_cancel: naming::method_ffi_cancel(&class.name, &method.name),
             ffi_free: naming::method_ffi_free(&class.name, &method.name),
+            ffi_module: NamingConvention::ffi_module_name(&module.name),
             args: method
                 .inputs
                 .iter()

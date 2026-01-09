@@ -576,7 +576,12 @@ impl SourceScanner {
                     m = m.with_param(Parameter::new(&name, ty));
                 }
                 if let Some(output) = method.output {
-                    m = m.with_output(output);
+                    if let Some((ok, err)) = output.result_types() {
+                        m = m.with_output(ok.clone());
+                        m = m.with_error(err.clone());
+                    } else {
+                        m = m.with_output(output);
+                    }
                 }
                 if method.is_async {
                     m = m.make_async();

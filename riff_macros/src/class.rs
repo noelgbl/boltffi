@@ -3,7 +3,8 @@ use quote::quote;
 use riff_ffi_rules::naming;
 use syn::{FnArg, ReturnType, Type};
 
-use crate::params::{FfiParams, transform_method_params};
+use crate::params::{transform_method_params, transform_method_params_async, FfiParams};
+use crate::returns::{classify_async_return, get_complete_conversion, get_default_ffi_value, get_ffi_return_type, get_rust_return_type};
 
 pub fn ffi_class_impl(item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemImpl);
@@ -42,6 +43,9 @@ pub fn ffi_class_impl(item: TokenStream) -> TokenStream {
                             method,
                             &item_type,
                         ));
+                    }
+                    if method.sig.asyncness.is_some() {
+                        return generate_async_method_export(&type_name, &type_name_str, method);
                     }
                     return generate_method_export(&type_name, &type_name_str, method);
                 }
@@ -152,6 +156,153 @@ fn generate_method_export(
             }
         })
     }
+}
+
+fn generate_async_method_export(
+    type_name: &syn::Ident,
+    class_name: &str,
+    method: &syn::ImplItemFn,
+) -> Option<proc_macro2::TokenStream> {
+    let method_name = &method.sig.ident;
+    let method_name_str = method_name.to_string();
+
+    let has_self = method
+        .sig
+        .inputs
+        .first()
+        .map(|arg| matches!(arg, FnArg::Receiver(_)))
+        .unwrap_or(false);
+
+    if !has_self {
+        return None;
+    }
+
+    let base_name = naming::method_ffi_name(class_name, &method_name_str);
+    let entry_ident = syn::Ident::new(&base_name, method_name.span());
+    let poll_ident = syn::Ident::new(&format!("{}_poll", base_name), method_name.span());
+    let complete_ident = syn::Ident::new(&format!("{}_complete", base_name), method_name.span());
+    let cancel_ident = syn::Ident::new(&format!("{}_cancel", base_name), method_name.span());
+    let free_ident = syn::Ident::new(&format!("{}_free", base_name), method_name.span());
+
+    let other_inputs = method.sig.inputs.iter().skip(1).cloned();
+    let params = transform_method_params_async(other_inputs);
+
+    let fn_output = &method.sig.output;
+    let return_kind = classify_async_return(fn_output);
+
+    let ffi_return_type = get_ffi_return_type(&return_kind);
+    let rust_return_type = get_rust_return_type(&return_kind);
+    let complete_conversion = get_complete_conversion(&return_kind);
+    let default_value = get_default_ffi_value(&return_kind);
+
+    let ffi_params = &params.ffi_params;
+    let pre_spawn = &params.pre_spawn;
+    let thread_setup = &params.thread_setup;
+    let call_args = &params.call_args;
+    let move_vars = &params.move_vars;
+
+    let future_body = quote! {
+        #(#thread_setup)*
+        instance.#method_name(#(#call_args),*).await
+    };
+
+    let entry_fn = if ffi_params.is_empty() {
+        quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #entry_ident(
+                handle: *mut #type_name
+            ) -> crate::RustFutureHandle {
+                let instance = &*handle;
+                crate::rustfuture::rust_future_new(async move {
+                    #future_body
+                })
+            }
+        }
+    } else {
+        quote! {
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #entry_ident(
+                handle: *mut #type_name,
+                #(#ffi_params),*
+            ) -> crate::RustFutureHandle {
+                let instance = &*handle;
+                #(#pre_spawn)*
+                #(let _ = &#move_vars;)*
+                crate::rustfuture::rust_future_new(async move {
+                    #future_body
+                })
+            }
+        }
+    };
+
+    use crate::returns::{AsyncErrorKind, AsyncReturnKind};
+
+    let complete_fn = match &return_kind {
+        AsyncReturnKind::Result(info) => {
+            let out_err_type = match &info.err_kind {
+                AsyncErrorKind::StringLike(_) => quote! { crate::FfiError },
+                AsyncErrorKind::Typed(err) => quote! { #err },
+            };
+            quote! {
+                #[unsafe(no_mangle)]
+                pub unsafe extern "C" fn #complete_ident(
+                    handle: crate::RustFutureHandle,
+                    out_status: *mut crate::FfiStatus,
+                    out_err: *mut #out_err_type,
+                ) -> #ffi_return_type {
+                    match crate::rustfuture::rust_future_complete::<#rust_return_type>(handle) {
+                        Some(result) => { #complete_conversion }
+                        None => {
+                            if !out_status.is_null() { *out_status = crate::FfiStatus::CANCELLED; }
+                            #default_value
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            quote! {
+                #[unsafe(no_mangle)]
+                pub unsafe extern "C" fn #complete_ident(
+                    handle: crate::RustFutureHandle,
+                    out_status: *mut crate::FfiStatus,
+                ) -> #ffi_return_type {
+                    match crate::rustfuture::rust_future_complete::<#rust_return_type>(handle) {
+                        Some(result) => { #complete_conversion }
+                        None => {
+                            if !out_status.is_null() { *out_status = crate::FfiStatus::CANCELLED; }
+                            #default_value
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    Some(quote! {
+        #entry_fn
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn #poll_ident(
+            handle: crate::RustFutureHandle,
+            callback_data: u64,
+            callback: crate::RustFutureContinuationCallback,
+        ) {
+            unsafe { crate::rustfuture::rust_future_poll::<#rust_return_type>(handle, callback, callback_data) }
+        }
+
+        #complete_fn
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn #cancel_ident(handle: crate::RustFutureHandle) {
+            unsafe { crate::rustfuture::rust_future_cancel::<#rust_return_type>(handle) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn #free_ident(handle: crate::RustFutureHandle) {
+            unsafe { crate::rustfuture::rust_future_free::<#rust_return_type>(handle) }
+        }
+    })
 }
 
 fn extract_ffi_stream_item(attrs: &[syn::Attribute]) -> Option<syn::Type> {

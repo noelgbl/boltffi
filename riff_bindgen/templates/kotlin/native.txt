@@ -21,7 +21,15 @@ private object Native {
     @JvmStatic external fun {{ class.ffi_new }}({% for param in class.ctor_params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): Long
     @JvmStatic external fun {{ class.ffi_free }}(handle: Long)
 {%- for method in class.methods %}
+{%- if method.is_async %}
+    @JvmStatic external fun {{ method.ffi_name }}(handle: Long{% if !method.params.is_empty() %}, {% endif %}{% for param in method.params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): Long
+    @JvmStatic external fun {{ method.ffi_poll }}(handle: Long, future: Long, contHandle: Long)
+    @JvmStatic external fun {{ method.ffi_complete }}(handle: Long, future: Long): {{ method.return_jni_type }}
+    @JvmStatic external fun {{ method.ffi_cancel }}(handle: Long, future: Long)
+    @JvmStatic external fun {{ method.ffi_free }}(handle: Long, future: Long)
+{%- else %}
     @JvmStatic external fun {{ method.ffi_name }}(handle: Long{% if !method.params.is_empty() %}, {% endif %}{% for param in method.params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): {{ method.return_jni_type }}
+{%- endif %}
 {%- endfor %}
 {%- endfor %}
 }

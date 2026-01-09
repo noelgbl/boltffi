@@ -63,7 +63,7 @@ impl Kotlin {
         module
             .classes
             .iter()
-            .for_each(|class| sections.push(Self::render_class(class)));
+            .for_each(|class| sections.push(Self::render_class(class, module)));
 
         sections.push(Self::render_native(module));
 
@@ -137,8 +137,8 @@ impl Kotlin {
         }
     }
 
-    pub fn render_class(class: &Class) -> String {
-        ClassTemplate::from_class(class)
+    pub fn render_class(class: &Class, module: &Module) -> String {
+        ClassTemplate::from_class(class, module)
             .render()
             .expect("class template failed")
     }
@@ -295,7 +295,18 @@ impl Kotlin {
     }
 
     fn is_supported_async_function(func: &Function, module: &Module) -> bool {
-        let supported_output = match &func.output {
+        let supported_output = Self::is_supported_async_output(&func.output, module);
+
+        let supported_inputs = func
+            .inputs
+            .iter()
+            .all(|param| matches!(&param.param_type, Type::Primitive(_) | Type::String));
+
+        supported_output && supported_inputs
+    }
+
+    pub fn is_supported_async_output(output: &Option<Type>, module: &Module) -> bool {
+        match output {
             None => true,
             Some(Type::Primitive(_)) => true,
             Some(Type::String) => true,
@@ -304,14 +315,7 @@ impl Kotlin {
             Some(Type::Record(name)) => Self::is_record_blittable(name, module),
             Some(Type::Result { ok, .. }) => Self::is_supported_async_result_ok(ok),
             _ => false,
-        };
-
-        let supported_inputs = func
-            .inputs
-            .iter()
-            .all(|param| matches!(&param.param_type, Type::Primitive(_) | Type::String));
-
-        supported_output && supported_inputs
+        }
     }
 
     fn is_supported_async_result_ok(ok: &Type) -> bool {
@@ -434,7 +438,8 @@ mod tests {
                     .with_output(Type::Primitive(Primitive::F64)),
             );
 
-        let output = Kotlin::render_class(&sensor_class);
+        let module = Module::new("test");
+        let output = Kotlin::render_class(&sensor_class, &module);
         assert!(output.contains("class Sensor"));
         assert!(output.contains("private val handle: Long"));
         assert!(output.contains("override fun close()"));
