@@ -40,10 +40,13 @@ impl Kotlin {
 
         let blittable_vec_return_records = Self::find_blittable_vec_return_records(module);
         let blittable_vec_param_records = Self::find_blittable_vec_param_records(module);
+        let async_return_records = Self::find_async_return_records(module);
 
         module.records.iter().for_each(|record| {
             sections.push(Self::render_record(record));
-            if blittable_vec_return_records.contains(&record.name.as_str()) {
+            let needs_reader = blittable_vec_return_records.contains(&record.name.as_str())
+                || async_return_records.contains(&record.name.as_str());
+            if needs_reader {
                 sections.push(Self::render_record_reader(record));
             }
             if blittable_vec_param_records.contains(&record.name.as_str()) {
@@ -192,6 +195,28 @@ impl Kotlin {
                     _ => None,
                 },
                 _ => None,
+            })
+            .collect()
+    }
+
+    fn find_async_return_records(module: &Module) -> std::collections::HashSet<&str> {
+        module
+            .functions
+            .iter()
+            .filter(|func| func.is_async)
+            .filter_map(|func| {
+                if let Some(Type::Record(record_name)) = &func.output {
+                    let is_blittable = module
+                        .records
+                        .iter()
+                        .find(|record| &record.name == record_name)
+                        .map(|record| record.is_blittable())
+                        .unwrap_or(false);
+                    if is_blittable {
+                        return Some(record_name.as_str());
+                    }
+                }
+                None
             })
             .collect()
     }

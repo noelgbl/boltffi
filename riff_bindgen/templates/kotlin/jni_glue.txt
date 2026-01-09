@@ -1121,14 +1121,13 @@ JNIEXPORT {{ func.jni_complete_return }} JNICALL {{ func.jni_complete_name }}(JN
     uint8_t _out_err[{{ func.result_err_struct_size }}];
     memset(_out_err, 0, {{ func.result_err_struct_size }});
 {%- endif %}
+    FfiStatus _status;
 {%- if func.result_ok_is_void %}
-    FfiStatus _status = {{ func.ffi_complete }}((RustFutureHandle)future, (void*)_out_err);
+    {{ func.ffi_complete }}((RustFutureHandle)future, &_status, (void*)&_out_err);
 {%- else if func.result_ok_is_string %}
-    FfiString _out = {0, 0, 0};
-    FfiStatus _status = {{ func.ffi_complete }}((RustFutureHandle)future, &_out, (void*)_out_err);
+    FfiString _out = {{ func.ffi_complete }}((RustFutureHandle)future, &_status, (void*)&_out_err);
 {%- else %}
-    {{ func.result_ok_c_type }} _out = 0;
-    FfiStatus _status = {{ func.ffi_complete }}((RustFutureHandle)future, &_out, (void*)_out_err);
+    {{ func.result_ok_c_type }} _out = {{ func.ffi_complete }}((RustFutureHandle)future, &_status, (void*)&_out_err);
 {%- endif %}
     if (_status.code != 0) {
 {%- if func.result_err_is_string %}

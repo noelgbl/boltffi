@@ -524,6 +524,8 @@ pub struct AsyncFunctionTemplate {
     pub params: Vec<ParamView>,
     pub return_type: Option<String>,
     pub complete_expr: String,
+    pub has_structured_error: bool,
+    pub error_codec: String,
 }
 
 impl AsyncFunctionTemplate {
@@ -574,9 +576,9 @@ impl AsyncFunctionTemplate {
             Some(Type::Record(name)) => {
                 let reader_name = format!("{}Reader", NamingConvention::class_name(name));
                 format!(
-                    "{}(Native.{}(future) ?: throw FfiException(-1, \"Null record\"))",
-                    reader_name,
-                    naming::function_ffi_complete(&function.name)
+                    "useNativeBuffer(Native.{}(future) ?: throw FfiException(-1, \"Null record\")) {{ buf -> buf.order(ByteOrder.nativeOrder()); {}.read(buf, 0) }}",
+                    naming::function_ffi_complete(&function.name),
+                    reader_name
                 )
             }
             Some(Type::Result { ok, .. }) => {
@@ -604,6 +606,14 @@ impl AsyncFunctionTemplate {
             ),
         };
 
+        let (has_structured_error, error_codec) = match &function.output {
+            Some(Type::Result { err, .. }) => match err.as_ref() {
+                Type::Enum(name) => (true, format!("{}Codec", NamingConvention::class_name(name))),
+                _ => (false, String::new()),
+            },
+            _ => (false, String::new()),
+        };
+
         Self {
             func_name: NamingConvention::method_name(&function.name),
             ffi_name,
@@ -614,6 +624,8 @@ impl AsyncFunctionTemplate {
             params,
             return_type,
             complete_expr,
+            has_structured_error,
+            error_codec,
         }
     }
 
@@ -947,6 +959,7 @@ impl NativeTemplate {
                     Type::Record(_) => (false, String::new(), "ByteBuffer".to_string()),
                     _ => (false, String::new(), "Long".to_string()),
                 },
+                Type::Record(_) => (false, String::new(), "ByteBuffer?".to_string()),
                 Type::Result { ok, .. } => Self::analyze_result_return(ok, module),
                 Type::Enum(enum_name)
                     if module

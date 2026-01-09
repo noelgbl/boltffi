@@ -49,7 +49,6 @@ internal class RiffHandleMap<T: Any> {
 
 private val riffContinuationMap = RiffHandleMap<CancellableContinuation<Byte>>()
 
-@JvmStatic
 internal fun riffFutureContinuationCallback(handle: Long, pollResult: Byte) {
     try {
         riffContinuationMap.remove(handle).resume(pollResult)

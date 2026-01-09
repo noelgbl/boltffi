@@ -382,7 +382,7 @@ impl JniGlueTemplate {
             .map(|p| {
                 (
                     p.ffi_buf_type().to_string(),
-                    format!("{}_free_{}", naming::ffi_prefix(), p.ffi_buf_type()),
+                    format!("{}_free_buf_{}", naming::ffi_prefix(), p.rust_name()),
                     p.jni_array_type().to_string(),
                     p.jni_new_array_fn().to_string(),
                     p.jni_set_array_fn().to_string(),

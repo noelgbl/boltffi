@@ -1,3 +1,16 @@
+{%- if has_structured_error %}
+suspend fun {{ func_name }}({% for param in params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% match return_type %}{% when Some with (ret) %}: {{ ret }}{% when None %}{% endmatch %} = try {
+    riffCallAsync(
+        createFuture = { Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) },
+        poll = { future, contHandle -> Native.{{ ffi_poll }}(future, contHandle) },
+        complete = { future -> {{ complete_expr }} },
+        free = { future -> Native.{{ ffi_free }}(future) },
+        cancel = { future -> Native.{{ ffi_cancel }}(future) }
+    )
+} catch (e: RiffException) {
+    throw {{ error_codec }}.read(e.errorBuffer)
+}
+{%- else %}
 suspend fun {{ func_name }}({% for param in params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% match return_type %}{% when Some with (ret) %}: {{ ret }}{% when None %}{% endmatch %} = riffCallAsync(
     createFuture = { Native.{{ ffi_name }}({% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) },
     poll = { future, contHandle -> Native.{{ ffi_poll }}(future, contHandle) },
@@ -5,3 +18,4 @@ suspend fun {{ func_name }}({% for param in params %}{{ param.name }}: {{ param.
     free = { future -> Native.{{ ffi_free }}(future) },
     cancel = { future -> Native.{{ ffi_cancel }}(future) }
 )
+{%- endif %}
