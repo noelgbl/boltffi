@@ -31,6 +31,14 @@ pub enum ErrorStyle {
     Result,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryStyle {
+    #[default]
+    Constructors,
+    CompanionMethods,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SwiftConfig {
     pub module_name: Option<String>,
@@ -46,6 +54,8 @@ pub struct KotlinConfig {
     pub output: PathBuf,
     #[serde(default)]
     pub error_style: ErrorStyle,
+    #[serde(default)]
+    pub factory_style: FactoryStyle,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -114,6 +124,7 @@ impl Default for KotlinConfig {
             package: String::from("com.example"),
             output: PathBuf::from("bindings/kotlin"),
             error_style: ErrorStyle::default(),
+            factory_style: FactoryStyle::default(),
         }
     }
 }

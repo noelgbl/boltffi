@@ -12,7 +12,7 @@ use crate::model::{
 use super::layout::{KotlinBufferRead, KotlinBufferWrite};
 use super::marshal::{OptionView, ParamConversion, ResultView, ReturnKind};
 use super::primitives;
-use super::{NamingConvention, TypeMapper};
+use super::{FactoryStyle, KotlinOptions, NamingConvention, TypeMapper};
 
 #[derive(Template)]
 #[template(path = "kotlin/preamble.txt", escape = "none")]
@@ -725,6 +725,8 @@ pub struct ClassTemplate {
     pub doc: Option<String>,
     pub ffi_free: String,
     pub constructors: Vec<ConstructorView>,
+    pub has_factory_ctors: bool,
+    pub use_companion_methods: bool,
     pub methods: Vec<MethodView>,
 }
 
@@ -750,9 +752,10 @@ pub struct MethodView {
 }
 
 impl ClassTemplate {
-    pub fn from_class(class: &Class, module: &Module) -> Self {
+    pub fn from_class(class: &Class, module: &Module, options: &KotlinOptions) -> Self {
         let class_name = NamingConvention::class_name(&class.name);
         let ffi_prefix = naming::class_ffi_prefix(&class.name);
+        let use_companion_methods = options.factory_style == FactoryStyle::CompanionMethods;
 
         let constructors: Vec<ConstructorView> = class
             .constructors
@@ -830,11 +833,19 @@ impl ClassTemplate {
             })
             .collect();
 
+        let has_factory_ctors = if use_companion_methods {
+            constructors.iter().any(|c| c.is_factory)
+        } else {
+            constructors.iter().any(|c| c.is_factory && c.params.is_empty())
+        };
+
         Self {
             class_name,
             doc: class.doc.clone(),
             ffi_free: format!("{}_free", ffi_prefix),
             constructors,
+            has_factory_ctors,
+            use_companion_methods,
             methods,
         }
     }

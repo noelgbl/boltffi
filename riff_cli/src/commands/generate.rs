@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use riff_bindgen::{CHeaderGenerator, JniGenerator, Kotlin, Swift, scan_crate};
+use riff_bindgen::{CHeaderGenerator, FactoryStyle, JniGenerator, Kotlin, KotlinOptions, Swift, scan_crate};
 
-use crate::config::Config;
+use crate::config::{Config, FactoryStyle as ConfigFactoryStyle};
 use crate::error::{CliError, Result};
 
 pub enum GenerateTarget {
@@ -100,7 +100,12 @@ fn generate_kotlin(config: &Config, output: Option<PathBuf>) -> Result<()> {
         status: None,
     })?;
 
-    let kotlin_code = Kotlin::render_module_with_package(&module, &package_name);
+    let factory_style = match config.kotlin.factory_style {
+        ConfigFactoryStyle::Constructors => FactoryStyle::Constructors,
+        ConfigFactoryStyle::CompanionMethods => FactoryStyle::CompanionMethods,
+    };
+    let options = KotlinOptions { factory_style };
+    let kotlin_code = Kotlin::render_module_with_options(&module, &package_name, &options);
     let kotlin_path = kotlin_dir.join(format!("{}.kt", config.kotlin_class_name()));
     std::fs::write(&kotlin_path, kotlin_code).map_err(|source| CliError::WriteFailed {
         path: kotlin_path.clone(),

@@ -25,6 +25,18 @@ use crate::model::{
     Type,
 };
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FactoryStyle {
+    #[default]
+    Constructors,
+    CompanionMethods,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct KotlinOptions {
+    pub factory_style: FactoryStyle,
+}
+
 pub struct Kotlin;
 
 impl Kotlin {
@@ -33,6 +45,14 @@ impl Kotlin {
     }
 
     pub fn render_module_with_package(module: &Module, package_name: &str) -> String {
+        Self::render_module_with_options(module, package_name, &KotlinOptions::default())
+    }
+
+    pub fn render_module_with_options(
+        module: &Module,
+        package_name: &str,
+        options: &KotlinOptions,
+    ) -> String {
         let mut sections = Vec::new();
 
         sections.push(Self::render_preamble_with_package(package_name, module));
@@ -73,7 +93,7 @@ impl Kotlin {
         module
             .classes
             .iter()
-            .for_each(|class| sections.push(Self::render_class(class, module)));
+            .for_each(|class| sections.push(Self::render_class(class, module, options)));
 
         module
             .callback_traits
@@ -188,8 +208,8 @@ impl Kotlin {
         }
     }
 
-    pub fn render_class(class: &Class, module: &Module) -> String {
-        ClassTemplate::from_class(class, module)
+    pub fn render_class(class: &Class, module: &Module, options: &KotlinOptions) -> String {
+        ClassTemplate::from_class(class, module, options)
             .render()
             .expect("class template failed")
     }
@@ -501,7 +521,7 @@ mod tests {
             );
 
         let module = Module::new("test");
-        let output = Kotlin::render_class(&sensor_class, &module);
+        let output = Kotlin::render_class(&sensor_class, &module, &KotlinOptions::default());
         assert!(output.contains("class Sensor"));
         assert!(output.contains("private val handle: Long"));
         assert!(output.contains("override fun close()"));

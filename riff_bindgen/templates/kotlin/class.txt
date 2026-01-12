@@ -10,20 +10,27 @@ class {{ class_name }} private constructor(private val handle: Long) : AutoClose
     constructor({% for param in ctor.params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}) : this(
         Native.{{ ctor.ffi_name }}({% for param in ctor.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
     )
+{%- else if !use_companion_methods && !ctor.params.is_empty() %}
+
+    constructor({% for param in ctor.params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}) : this(
+        Native.{{ ctor.ffi_name }}({% for param in ctor.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
+    )
 {%- endif %}{% endfor %}
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         Native.{{ ffi_free }}(handle)
     }
-{%- for ctor in constructors %}{% if ctor.is_factory %}
+{%- if has_factory_ctors %}
 
     companion object {
+{%- for ctor in constructors %}{% if ctor.is_factory && (use_companion_methods || ctor.params.is_empty()) %}
         fun {{ ctor.name }}({% for param in ctor.params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}): {{ class_name }} {
             return {{ class_name }}(Native.{{ ctor.ffi_name }}({% for param in ctor.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}))
         }
-    }
 {%- endif %}{% endfor %}
+    }
+{%- endif %}
 {%- for method in methods %}
 {%- if method.is_async %}
 
