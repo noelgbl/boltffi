@@ -634,3 +634,250 @@ impl SyncCallBuilder {
         .join(", ")
     }
 }
+
+#[derive(Debug, Clone)]
+pub enum ReturnAbi {
+    Unit,
+    Direct { swift_type: String, conversion: Option<String> },
+    WireEncoded { swift_type: String, decode_expr: String, throws: bool },
+}
+
+impl ReturnAbi {
+    pub fn from_return_type(returns: &ReturnType, module: &Module) -> Self {
+        match returns {
+            ReturnType::Void => Self::Unit,
+            ReturnType::Value(ty) => Self::from_value_type(ty, module),
+            ReturnType::Fallible { ok, err } => Self::from_fallible(ok, err, module),
+        }
+    }
+
+    fn from_value_type(ty: &Type, module: &Module) -> Self {
+        match ty {
+            Type::Void => Self::Unit,
+            Type::Primitive(_) => Self::Direct {
+                swift_type: SwiftType::from_model(ty).swift_type(),
+                conversion: None,
+            },
+            Type::Enum(name) => {
+                let is_data = module.enums.iter().any(|e| &e.name == name && e.is_data_enum());
+                if is_data {
+                    Self::WireEncoded {
+                        swift_type: NamingConvention::class_name(name),
+                        decode_expr: format!("{}(wireBuffer: wire, at: 0)", NamingConvention::class_name(name)),
+                        throws: false,
+                    }
+                } else {
+                    Self::Direct {
+                        swift_type: NamingConvention::class_name(name),
+                        conversion: Some(format!("{}(fromC: $0)", NamingConvention::class_name(name))),
+                    }
+                }
+            }
+            Type::Record(name) => {
+                let is_blittable = module.records.iter().any(|r| &r.name == name && r.is_blittable());
+                if is_blittable {
+                    Self::Direct {
+                        swift_type: NamingConvention::class_name(name),
+                        conversion: None,
+                    }
+                } else {
+                    Self::WireEncoded {
+                        swift_type: NamingConvention::class_name(name),
+                        decode_expr: format!("{}(wireBuffer: wire, at: 0)", NamingConvention::class_name(name)),
+                        throws: false,
+                    }
+                }
+            }
+            Type::String => Self::WireEncoded {
+                swift_type: "String".into(),
+                decode_expr: "wire.readString(at: 0).value".into(),
+                throws: false,
+            },
+            Type::Vec(inner) => Self::WireEncoded {
+                swift_type: format!("[{}]", SwiftType::from_model(inner).swift_type()),
+                decode_expr: Self::vec_decode_expr(inner, module),
+                throws: false,
+            },
+            Type::Option(inner) => Self::WireEncoded {
+                swift_type: format!("{}?", SwiftType::from_model(inner).swift_type()),
+                decode_expr: Self::option_decode_expr(inner, module),
+                throws: false,
+            },
+            _ => Self::Direct {
+                swift_type: SwiftType::from_model(ty).swift_type(),
+                conversion: None,
+            },
+        }
+    }
+
+    fn from_fallible(ok: &Type, err: &Type, module: &Module) -> Self {
+        let ok_swift = SwiftType::from_model(ok).swift_type();
+        let err_swift = Self::error_type_name(err, module);
+        let ok_decode = Self::ok_decode_expr(ok, module);
+        
+        Self::WireEncoded {
+            swift_type: if ok.is_void() { "Void".into() } else { ok_swift },
+            decode_expr: format!(
+                "try wire.readResultOrThrow(at: 0, ok: {{ {} }}, err: {{ {} }})",
+                ok_decode,
+                Self::error_decode_expr(err, &err_swift)
+            ),
+            throws: true,
+        }
+    }
+
+    fn ok_decode_expr(ty: &Type, module: &Module) -> String {
+        match ty {
+            Type::Void => "()".into(),
+            Type::Primitive(p) => format!("wire.{}(at: $0)", Self::primitive_read_fn(*p)),
+            Type::String => "wire.readString(at: $0).value".into(),
+            Type::Enum(name) => {
+                let is_data = module.enums.iter().any(|e| &e.name == name && e.is_data_enum());
+                if is_data {
+                    format!("{}(wireBuffer: wire, at: $0)", NamingConvention::class_name(name))
+                } else {
+                    format!("{}(fromC: wire.readI32(at: $0))", NamingConvention::class_name(name))
+                }
+            }
+            Type::Record(name) => format!("{}(wireBuffer: wire, at: $0)", NamingConvention::class_name(name)),
+            Type::Vec(inner) => Self::vec_decode_expr_inner(inner, module),
+            Type::Option(inner) => Self::option_decode_expr_inner(inner, module),
+            _ => "/* unsupported */".into(),
+        }
+    }
+
+    fn error_type_name(err: &Type, module: &Module) -> String {
+        match err {
+            Type::String => "FfiError".into(),
+            Type::Enum(name) => {
+                if module.enums.iter().any(|e| &e.name == name && e.is_error) {
+                    NamingConvention::class_name(name)
+                } else {
+                    "FfiError".into()
+                }
+            }
+            _ => "FfiError".into(),
+        }
+    }
+
+    fn error_decode_expr(err: &Type, err_swift: &str) -> String {
+        match err {
+            Type::String => "FfiError(message: wire.readString(at: $0).value)".into(),
+            Type::Enum(_) => format!("{}(wireBuffer: wire, at: $0)", err_swift),
+            _ => "FfiError(message: \"unknown error\")".into(),
+        }
+    }
+
+    fn vec_decode_expr(inner: &Type, module: &Module) -> String {
+        format!("wire.readArray(at: 0, reader: {{ {} }}).value", Self::vec_element_decode(inner, module))
+    }
+
+    fn vec_decode_expr_inner(inner: &Type, module: &Module) -> String {
+        format!("wire.readArray(at: $0, reader: {{ {} }}).value", Self::vec_element_decode(inner, module))
+    }
+
+    fn vec_element_decode(inner: &Type, module: &Module) -> String {
+        match inner {
+            Type::Primitive(p) => format!("wire.{}(at: $0)", Self::primitive_read_fn(*p)),
+            Type::String => "wire.readString(at: $0).value".into(),
+            Type::Record(name) => format!("{}(wireBuffer: wire, at: $0)", NamingConvention::class_name(name)),
+            Type::Enum(name) => {
+                let is_data = module.enums.iter().any(|e| &e.name == name && e.is_data_enum());
+                if is_data {
+                    format!("{}(wireBuffer: wire, at: $0)", NamingConvention::class_name(name))
+                } else {
+                    format!("{}(fromC: wire.readI32(at: $0))", NamingConvention::class_name(name))
+                }
+            }
+            _ => "/* unsupported */".into(),
+        }
+    }
+
+    fn option_decode_expr(inner: &Type, module: &Module) -> String {
+        format!("wire.readOptional(at: 0, reader: {{ {} }}).value", Self::option_inner_decode(inner, module))
+    }
+
+    fn option_decode_expr_inner(inner: &Type, module: &Module) -> String {
+        format!("wire.readOptional(at: $0, reader: {{ {} }}).value", Self::option_inner_decode(inner, module))
+    }
+
+    fn option_inner_decode(inner: &Type, module: &Module) -> String {
+        match inner {
+            Type::Primitive(p) => format!("(wire.{}(at: $0), {})", Self::primitive_read_fn(*p), p.fits_in_32_bits().then_some(4).unwrap_or(8)),
+            Type::String => "(wire.readString(at: $0).value, 0)".into(),
+            Type::Record(name) => format!("({}(wireBuffer: wire, at: $0), 0)", NamingConvention::class_name(name)),
+            Type::Enum(name) => {
+                let is_data = module.enums.iter().any(|e| &e.name == name && e.is_data_enum());
+                if is_data {
+                    format!("({}(wireBuffer: wire, at: $0), 0)", NamingConvention::class_name(name))
+                } else {
+                    format!("({}(fromC: wire.readI32(at: $0)), 4)", NamingConvention::class_name(name))
+                }
+            }
+            _ => "(/* unsupported */, 0)".into(),
+        }
+    }
+
+    fn primitive_read_fn(p: Primitive) -> &'static str {
+        match p {
+            Primitive::Bool => "readBool",
+            Primitive::I8 => "readI8",
+            Primitive::U8 => "readU8",
+            Primitive::I16 => "readI16",
+            Primitive::U16 => "readU16",
+            Primitive::I32 => "readI32",
+            Primitive::U32 => "readU32",
+            Primitive::I64 => "readI64",
+            Primitive::U64 => "readU64",
+            Primitive::F32 => "readF32",
+            Primitive::F64 => "readF64",
+            Primitive::Isize => "readI64",
+            Primitive::Usize => "readU64",
+        }
+    }
+
+    pub fn is_unit(&self) -> bool {
+        matches!(self, Self::Unit)
+    }
+
+    pub fn is_direct(&self) -> bool {
+        matches!(self, Self::Direct { .. })
+    }
+
+    pub fn is_wire_encoded(&self) -> bool {
+        matches!(self, Self::WireEncoded { .. })
+    }
+
+    pub fn throws(&self) -> bool {
+        matches!(self, Self::WireEncoded { throws: true, .. })
+    }
+
+    pub fn swift_type(&self) -> Option<&str> {
+        match self {
+            Self::Unit => None,
+            Self::Direct { swift_type, .. } | Self::WireEncoded { swift_type, .. } => Some(swift_type),
+        }
+    }
+
+    pub fn decode_expr(&self) -> &str {
+        match self {
+            Self::WireEncoded { decode_expr, .. } => decode_expr,
+            _ => "",
+        }
+    }
+
+    pub fn conversion(&self) -> Option<&str> {
+        match self {
+            Self::Direct { conversion, .. } => conversion.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub fn direct_call_expr(&self, ffi_call: &str) -> String {
+        match self {
+            Self::Direct { conversion: Some(conv), .. } => conv.replace("$0", ffi_call),
+            Self::Direct { conversion: None, .. } => ffi_call.to_string(),
+            _ => ffi_call.to_string(),
+        }
+    }
+}

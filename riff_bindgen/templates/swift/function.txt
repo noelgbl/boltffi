@@ -196,10 +196,7 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
         }
     }
 {%- else %}
-{#- SYNC FUNCTION #}
-{%- if return_kind.is_string() %}
-    var result = FfiString(ptr: nil, len: 0, cap: 0)
-{%- endif %}
+{#- SYNC FUNCTION - 3 branches: Unit, Direct, WireEncoded #}
 {%- if has_callbacks %}
 {%- for cb in callbacks %}
     typealias {{ cb.context_type }} = ({{ cb.swift_type }}) -> Void
@@ -212,106 +209,16 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
 {%- endfor %}
 {%- endif %}
 {%- if has_wrappers %}
-    {% if return_type.is_some() %}return {% endif %}{% if throws %}try {% endif %}{{ wrappers_open }}
+    {% if return_type.is_some() %}return {% endif %}{% if return_abi.throws() %}try {% endif %}{{ wrappers_open }}
 {%- endif %}
-{%- if return_kind.is_result() %}
-{%- match structured_error %}{%- when Some with (err) %}
-    var outErr = {{ err.ffi_type }}()
-{%- if let Some(ffi_ok) = result_ok_ffi_type %}
-    var outValue = {{ ffi_ok }}()
-    let status = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outValue, &outErr)
-{%- else %}
-    let status = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outErr)
-{%- endif %}
-    if status.code != 0 {
-{%- if err.is_string_error %}
-        throw FfiError(fromC: outErr)
-{%- else %}
-        throw {{ err.swift_type }}(fromC: outErr)
-{%- endif %}
-    }
-{%- match return_type %}{% when Some with (ret) %}
-{%- if let Some(ffi_ok) = result_ok_ffi_type %}
-{%- if ffi_ok == ret %}
-    return outValue
-{%- else if ffi_ok == "Int32" %}
-    return {{ ret }}(fromC: outValue)
-{%- else if ffi_ok.ends_with("FfiString") %}
-    defer { {{ prefix }}_free_string(outValue) }
-    return stringFromFfi(outValue)
-{%- else %}
-    return {{ ret }}(fromC: outValue)
-{%- endif %}
-{%- endif %}
-{% when None %}{% endmatch %}
-{%- when None %}{% endmatch %}
-{%- else if return_kind.is_string() %}
-    let status = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() && !callback_args.is_empty() %}, {% endif %}{{ callback_args }}{% if !ffi_args.is_empty() || !callback_args.is_empty() %}, {% endif %}&result)
-    defer { {{ prefix }}_free_string(result) }
+{%- if return_abi.is_unit() %}
+    {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() && !callback_args.is_empty() %}, {% endif %}{{ callback_args }})
 {%- if has_callbacks %}
 {%- for cb in callbacks %}
     Unmanaged<{{ cb.box_type }}>.fromOpaque({{ cb.ptr_name }}).release()
 {%- endfor %}
 {%- endif %}
-    ensureOk(status)
-    return stringFromFfi(result)
-{%- else if return_kind.is_vec() %}
-{%- if let Some(free_fn) = return_kind.vec_free_fn() %}
-    let buf = {{ ffi_name }}({{ ffi_args }})
-    defer { {{ free_fn }}(buf) }
-    return Array(UnsafeBufferPointer(start: buf.ptr, count: Int(buf.len)))
-{%- endif %}
-{%- else if return_kind.is_option_vec() %}
-{%- if let Some(free_fn) = return_kind.option_vec_free_fn() %}
-    let opt = {{ ffi_name }}({{ ffi_args }})
-    if !opt.isSome { return nil }
-    defer { {{ free_fn }}(opt.value) }
-{%- if return_kind.option_vec_is_string() %}
-    var result = [String]()
-    result.reserveCapacity(Int(opt.value.len))
-    for i in 0..<Int(opt.value.len) {
-        let ffiStr = opt.value.ptr[i]
-        result.append(stringFromFfi(ffiStr))
-    }
-    return result
-{%- else if return_kind.option_vec_is_enum() %}
-{%- if let Some(inner) = return_kind.inner_type() %}
-    return UnsafeBufferPointer(start: opt.value.ptr, count: Int(opt.value.len)).map { {{ inner }}(fromC: $0) }
-{%- endif %}
-{%- else %}
-    return Array(UnsafeBufferPointer(start: opt.value.ptr, count: Int(opt.value.len)))
-{%- endif %}
-{%- endif %}
-{%- else if return_kind.is_option_string() %}
-    let result = {{ ffi_name }}({{ ffi_args }})
-    if !result.isSome { return nil }
-    defer { {{ prefix }}_free_string(result.value) }
-    return stringFromFfi(result.value)
-{%- else if return_kind.is_option_enum() %}
-{%- if let Some(inner) = return_kind.inner_type() %}
-    let result = {{ ffi_name }}({{ ffi_args }})
-    return result.isSome ? {{ inner }}(fromC: result.value) : nil
-{%- endif %}
-{%- else if return_kind.is_option_data_enum() %}
-{%- if let Some(inner) = return_kind.inner_type() %}
-    let result = {{ ffi_name }}({{ ffi_args }})
-    return result.isSome ? {{ inner }}(fromC: result.value) : nil
-{%- endif %}
-{%- else if return_kind.is_option_record() %}
-{%- if let Some(inner) = return_kind.inner_type() %}
-    let result = {{ ffi_name }}({{ ffi_args }})
-    return result.isSome ? result.value : nil
-{%- endif %}
-{%- else if return_kind.is_option_scalar() %}
-{%- if let Some(inner) = return_kind.inner_type() %}
-    let result = {{ ffi_name }}({{ ffi_args }})
-    return result.isSome ? result.value : nil
-{%- endif %}
-{%- else if return_kind.is_enum() %}
-{%- if let Some(name) = return_kind.type_name() %}
-    return {{ name }}(fromC: {{ ffi_name }}({{ ffi_args }}))
-{%- endif %}
-{%- else if return_type.is_some() %}
+{%- else if return_abi.is_direct() %}
 {%- if has_callbacks %}
     let result = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() && !callback_args.is_empty() %}, {% endif %}{{ callback_args }})
 {%- for cb in callbacks %}
@@ -319,16 +226,18 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
 {%- endfor %}
     return result
 {%- else %}
-    return {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() && !callback_args.is_empty() %}, {% endif %}{{ callback_args }})
+    return {{ direct_call }}
 {%- endif %}
-{%- else %}
-    let status = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() && !callback_args.is_empty() %}, {% endif %}{{ callback_args }})
+{%- else if return_abi.is_wire_encoded() %}
+    let buf = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() && !callback_args.is_empty() %}, {% endif %}{{ callback_args }})
 {%- if has_callbacks %}
 {%- for cb in callbacks %}
     Unmanaged<{{ cb.box_type }}>.fromOpaque({{ cb.ptr_name }}).release()
 {%- endfor %}
 {%- endif %}
-    ensureOk(status)
+    defer { {{ prefix }}_free_buf_u8(buf) }
+    let wire = WireBuffer(data: Data(bytes: buf.ptr!, count: Int(buf.len)))
+    return {{ return_abi.decode_expr() }}
 {%- endif %}
 {%- if has_wrappers %}
     {{ wrappers_close }}

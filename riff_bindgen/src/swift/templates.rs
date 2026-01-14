@@ -8,6 +8,7 @@ use crate::model::{
 
 use super::body::BodyRenderer;
 use super::conversion::ParamInfo;
+use super::marshal::{ReturnAbi, ReturnKind, SyncCallBuilder};
 use super::names::NamingConvention;
 use super::types::TypeMapper;
 
@@ -202,7 +203,9 @@ pub struct FunctionTemplate {
     pub ffi_module_name: Option<String>,
     pub params: Vec<ParamInfo>,
     pub return_type: Option<String>,
-    pub return_kind: super::marshal::ReturnKind,
+    pub return_abi: ReturnAbi,
+    pub direct_call: String,
+    pub return_kind: ReturnKind,
     pub structured_error: Option<StructuredError>,
     pub result_ok_ffi_type: Option<String>,
     pub is_async: bool,
@@ -236,7 +239,7 @@ impl FunctionTemplate {
         );
 
         let ffi_name = naming::function_ffi_name(&function.name);
-        let call_builder = super::marshal::SyncCallBuilder::new(&ffi_name, false).with_params(
+        let call_builder = SyncCallBuilder::new(&ffi_name, false).with_params(
             function
                 .non_callback_params()
                 .map(|p| (p.name.as_str(), &p.param_type)),
@@ -266,8 +269,9 @@ impl FunctionTemplate {
             })
             .unwrap_or_default();
 
-        let return_kind =
-            super::marshal::ReturnKind::from_returns(&function.returns, &function.name, module);
+        let return_kind = ReturnKind::from_returns(&function.returns, &function.name, module);
+        let return_abi = ReturnAbi::from_return_type(&function.returns, module);
+        let direct_call = return_abi.direct_call_expr(&format!("{}({})", ffi_name, call_builder.build_ffi_args()));
 
         let structured_error = Self::extract_structured_error(&function.returns, module);
         let result_ok_ffi_type = Self::extract_result_ok_ffi_type(&function.returns, module);
@@ -281,6 +285,8 @@ impl FunctionTemplate {
             ffi_module_name,
             params: params_info.params,
             return_type,
+            return_abi,
+            direct_call,
             return_kind,
             structured_error,
             result_ok_ffi_type,
@@ -696,7 +702,7 @@ pub struct SyncMethodBodyTemplate {
 impl SyncMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, _module: &Module) -> Self {
         let ffi_name = naming::method_ffi_name(&class.name, &method.name);
-        let call_builder = super::marshal::SyncCallBuilder::new(&ffi_name, true).with_params(
+        let call_builder = SyncCallBuilder::new(&ffi_name, true).with_params(
             method
                 .non_callback_params()
                 .map(|p| (p.name.as_str(), &p.param_type)),
@@ -729,7 +735,7 @@ pub struct CallbackMethodBodyTemplate {
 impl CallbackMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, _module: &Module) -> Self {
         let ffi_name = naming::method_ffi_name(&class.name, &method.name);
-        let call_builder = super::marshal::SyncCallBuilder::new(&ffi_name, true).with_params(
+        let call_builder = SyncCallBuilder::new(&ffi_name, true).with_params(
             method
                 .non_callback_params()
                 .map(|p| (p.name.as_str(), &p.param_type)),
@@ -777,7 +783,7 @@ pub struct ThrowingMethodBodyTemplate {
 impl ThrowingMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, _module: &Module) -> Self {
         let ffi_name = naming::method_ffi_name(&class.name, &method.name);
-        let call_builder = super::marshal::SyncCallBuilder::new(&ffi_name, true).with_params(
+        let call_builder = SyncCallBuilder::new(&ffi_name, true).with_params(
             method
                 .inputs
                 .iter()
