@@ -290,6 +290,14 @@ extension Data {
         appendU32(UInt32(value.count))
         for s in value { appendString(s) }
     }
+    @inlinable mutating func appendBytes(_ value: Data) {
+        appendU32(UInt32(value.count))
+        append(contentsOf: value)
+    }
+    @inlinable mutating func appendBytes(_ value: [UInt8]) {
+        appendU32(UInt32(value.count))
+        append(contentsOf: value)
+    }
 }
 
 extension Array where Element == UInt8 {
@@ -322,6 +330,14 @@ extension Array where Element == UInt8 {
     @inlinable mutating func appendStringArray(_ value: [String]) {
         appendU32(UInt32(value.count))
         for s in value { appendString(s) }
+    }
+    @inlinable mutating func appendBytes(_ value: Data) {
+        appendU32(UInt32(value.count))
+        append(contentsOf: value)
+    }
+    @inlinable mutating func appendBytes(_ value: [UInt8]) {
+        appendU32(UInt32(value.count))
+        append(contentsOf: value)
     }
 }
 

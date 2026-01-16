@@ -96,7 +96,8 @@ pub fn decode_type(ty: &Type, module: &Module) -> TypeCodec {
         Type::Enum(name) => decode_enum(name, module),
         Type::Vec(inner) => decode_vec(inner, module),
         Type::Option(inner) => decode_option(inner, module),
-        _ => TypeCodec::fixed("/* unsupported */", 0),
+        Type::Bytes => TypeCodec::variable(format!("wire.readBytesWithSize(at: {})", OFFSET_PLACEHOLDER)),
+        other => panic!("wire decode not supported for type: {:?}", other),
     }
 }
 
@@ -213,11 +214,16 @@ pub fn encode_type(ty: &Type, name: &str, module: &Module) -> TypeEncoder {
         Type::Enum(enum_name) => encode_enum(enum_name, name, module),
         Type::Vec(inner) => encode_vec(inner, name, module),
         Type::Option(inner) => encode_option(inner, name, module),
-        _ => TypeEncoder {
-            size_expr: "0".into(),
-            encode_to_data: format!("/* unsupported: {} */", name),
-            encode_to_bytes: format!("/* unsupported: {} */", name),
-        },
+        Type::Bytes => encode_bytes(name),
+        other => panic!("wire encode not supported for type: {:?}", other),
+    }
+}
+
+fn encode_bytes(name: &str) -> TypeEncoder {
+    TypeEncoder {
+        size_expr: format!("(4 + {}.count)", name),
+        encode_to_data: format!("data.appendBytes({})", name),
+        encode_to_bytes: format!("bytes.appendBytes({})", name),
     }
 }
 
