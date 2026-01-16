@@ -53,6 +53,39 @@ impl TypeCodec {
             SizeKind::Variable => format!("{}.value", expr),
         }
     }
+
+    pub fn decode_to_binding(&self, name: &str, offset_var: &str) -> String {
+        let expr = self.reader_expr.replace(OFFSET_PLACEHOLDER, offset_var);
+        match &self.size_kind {
+            SizeKind::Fixed(size) => format!("let {} = {}; {} += {}", name, expr, offset_var, size),
+            SizeKind::Variable => format!(
+                "let ({}, {}Size) = {}; {} += {}Size",
+                name, name, expr, offset_var, name
+            ),
+        }
+    }
+
+    pub fn decode_as_tuple(&self, offset_var: &str) -> String {
+        let expr = self.reader_expr.replace(OFFSET_PLACEHOLDER, offset_var);
+        match &self.size_kind {
+            SizeKind::Fixed(size) => format!("({}, {})", expr, size),
+            SizeKind::Variable => expr,
+        }
+    }
+
+    pub fn as_stream_item_closure(&self, offset_var: &str) -> String {
+        let expr = self.reader_expr.replace(OFFSET_PLACEHOLDER, offset_var);
+        match &self.size_kind {
+            SizeKind::Fixed(size) => format!(
+                "{{ let v = {}; {} += {}; return v }}()",
+                expr, offset_var, size
+            ),
+            SizeKind::Variable => format!(
+                "{{ let (v, s) = {}; {} += s; return v }}()",
+                expr, offset_var
+            ),
+        }
+    }
 }
 
 pub fn decode_type(ty: &Type, module: &Module) -> TypeCodec {
@@ -160,11 +193,6 @@ fn primitive_wire_info(p: Primitive) -> (&'static str, usize) {
         Primitive::Isize => ("readI64", 8),
         Primitive::Usize => ("readU64", 8),
     }
-}
-
-pub fn decode_at_offset(ty: &Type, module: &Module, offset: &str) -> String {
-    let codec = decode_type(ty, module);
-    codec.reader_expr.replace(OFFSET_PLACEHOLDER, offset)
 }
 
 pub fn decode_value_at_offset(ty: &Type, module: &Module, offset: &str) -> String {

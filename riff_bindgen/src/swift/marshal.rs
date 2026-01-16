@@ -223,10 +223,6 @@ impl SyncCallBuilder {
         self
     }
 
-    pub fn has_wrappers(&self) -> bool {
-        self.params.iter().any(|p| p.needs_wrapper())
-    }
-
     pub fn build_wrappers_open(&self) -> String {
         self.params
             .iter()

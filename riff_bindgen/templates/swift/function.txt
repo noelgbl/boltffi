@@ -145,7 +145,7 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
     }
 {%- endfor %}
 {%- endif %}
-{%- if has_wrappers %}
+{%- if self.has_wrappers() %}
     {% if return_type.is_some() %}return {% else %}_ = {% endif %}{% if return_abi.throws() %}try {% endif %}{{ wrappers_open }}
 {%- endif %}
 {%- if return_abi.is_unit() %}
@@ -176,7 +176,7 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
     let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
     return {{ return_abi.decode_expr() }}
 {%- endif %}
-{%- if has_wrappers %}
+{%- if self.has_wrappers() %}
     {{ wrappers_close }}
 {%- endif %}
 {%- endif %}

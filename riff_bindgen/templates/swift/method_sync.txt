@@ -1,4 +1,4 @@
-{%- if has_wrappers %}
+{%- if self.has_wrappers() %}
         {% if has_return %}return {% endif %}{{ wrappers_open }}
             {%- if has_return %}
             {{ ffi_name }}({{ ffi_args }})

@@ -1,4 +1,10 @@
-        let futureHandle = {{ ffi_name }}(handle{% for arg in args %}, {{ arg }}{% endfor %})
+{%- if self.has_wrappers() %}
+        let futureHandle = {{ wrappers_open }}
+            {{ ffi_name }}({{ ffi_args }})
+        {{ wrappers_close }}
+{%- else %}
+        let futureHandle = {{ ffi_name }}({{ ffi_args }})
+{%- endif %}
 
         typealias FutureContext = FfiFutureState<{{ return_type }}>
         let state = FutureContext(handle: futureHandle)

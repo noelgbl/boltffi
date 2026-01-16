@@ -2,7 +2,7 @@ use askama::Template;
 use riff_ffi_rules::naming;
 
 use crate::model::{
-    CallbackTrait, Class, Enumeration, Function, Method, Module, Primitive, Record,
+    CallbackTrait, Class, Enumeration, Function, Method, Module, Record,
     StreamMethod, StreamMode, Type,
 };
 
@@ -12,6 +12,41 @@ use super::marshal::{ReturnAbi, SyncCallBuilder};
 use super::names::NamingConvention;
 use super::types::TypeMapper;
 use super::wire;
+
+struct MethodContext {
+    ffi_name: String,
+    wrappers_open: String,
+    wrappers_close: String,
+    ffi_args: String,
+}
+
+impl MethodContext {
+    fn from_method(method: &Method, class: &Class, module: &Module, include_handle: bool) -> Self {
+        let call_builder = SyncCallBuilder::new(include_handle).with_params(
+            method.non_callback_params().map(|p| (p.name.as_str(), &p.param_type)),
+            module,
+        );
+        Self {
+            ffi_name: naming::method_ffi_name(&class.name, &method.name),
+            wrappers_open: call_builder.build_wrappers_open(),
+            wrappers_close: call_builder.build_wrappers_close(),
+            ffi_args: call_builder.build_ffi_args(),
+        }
+    }
+
+    fn from_method_all_params(method: &Method, class: &Class, module: &Module) -> Self {
+        let call_builder = SyncCallBuilder::new(false).with_params(
+            method.inputs.iter().map(|p| (p.name.as_str(), &p.param_type)),
+            module,
+        );
+        Self {
+            ffi_name: naming::method_ffi_name(&class.name, &method.name),
+            wrappers_open: call_builder.build_wrappers_open(),
+            wrappers_close: call_builder.build_wrappers_close(),
+            ffi_args: call_builder.build_ffi_args(),
+        }
+    }
+}
 
 #[derive(Template)]
 #[template(path = "swift/preamble.txt", escape = "none")]
@@ -83,15 +118,6 @@ impl RecordTemplate {
         matches!(ty, Type::Primitive(_))
     }
 
-    fn primitive_size(p: Primitive) -> usize {
-        match p {
-            Primitive::Bool | Primitive::I8 | Primitive::U8 => 1,
-            Primitive::I16 | Primitive::U16 => 2,
-            Primitive::I32 | Primitive::U32 | Primitive::F32 => 4,
-            Primitive::I64 | Primitive::U64 | Primitive::F64 | Primitive::Isize | Primitive::Usize => 8,
-        }
-    }
-
     fn make_field(field: &crate::model::RecordField, _idx: usize, module: &Module) -> FieldView {
         let swift_name = NamingConvention::property_name(&field.name);
         let encoder = wire::encode_type(&field.field_type, &swift_name, module);
@@ -138,7 +164,6 @@ pub struct FunctionTemplate {
     pub ffi_complete: String,
     pub ffi_free: String,
     pub ffi_cancel: String,
-    pub has_wrappers: bool,
     pub wrappers_open: String,
     pub wrappers_close: String,
     pub ffi_args: String,
@@ -201,12 +226,15 @@ impl FunctionTemplate {
             ffi_complete: naming::function_ffi_complete(&function.name),
             ffi_free: naming::function_ffi_free(&function.name),
             ffi_cancel: naming::function_ffi_cancel(&function.name),
-            has_wrappers: call_builder.has_wrappers(),
             wrappers_open: call_builder.build_wrappers_open(),
             wrappers_close: call_builder.build_wrappers_close(),
             ffi_args: call_builder.build_ffi_args(),
             callback_args,
         }
+    }
+
+    pub fn has_wrappers(&self) -> bool {
+        !self.wrappers_open.is_empty()
     }
 }
 
@@ -262,13 +290,13 @@ impl DataEnumTemplate {
                         .fields
                         .iter()
                         .enumerate()
-                        .map(|(idx, field)| {
+                        .map(|(_, field)| {
                             let swift_name = NamingConvention::param_name(&field.name);
                             let c_name = field.name.clone();
-                            let wire_decode = Self::enum_field_wire_decode(&field.field_type, &swift_name, idx);
-                            let wire_size = Self::enum_field_wire_size(&field.field_type, &swift_name);
-                            let wire_encode = Self::enum_field_wire_encode(&field.field_type, &swift_name);
-                            let wire_encode_bytes = Self::enum_field_wire_encode_bytes(&field.field_type, &swift_name);
+                            let wire_decode = Self::enum_field_wire_decode(&field.field_type, &swift_name, module);
+                            let wire_size = Self::enum_field_wire_size(&field.field_type, &swift_name, module);
+                            let wire_encode = Self::enum_field_wire_encode(&field.field_type, &swift_name, module);
+                            let wire_encode_bytes = Self::enum_field_wire_encode_bytes(&field.field_type, &swift_name, module);
                             EnumFieldView {
                                 needs_alias: swift_name != c_name,
                                 swift_name,
@@ -282,17 +310,17 @@ impl DataEnumTemplate {
                         })
                         .collect();
                     let single_wire_decode = if is_single_tuple && !variant.fields.is_empty() {
-                        Self::single_tuple_wire_decode(&variant.fields[0].field_type)
+                        Self::single_tuple_wire_decode(&variant.fields[0].field_type, module)
                     } else {
                         String::new()
                     };
                     let wire_encode_single = if is_single_tuple && !variant.fields.is_empty() {
-                        Self::single_tuple_wire_encode(&variant.fields[0].field_type)
+                        Self::single_tuple_wire_encode(&variant.fields[0].field_type, module)
                     } else {
                         String::new()
                     };
                     let wire_encode_bytes_single = if is_single_tuple && !variant.fields.is_empty() {
-                        Self::single_tuple_wire_encode_bytes(&variant.fields[0].field_type)
+                        Self::single_tuple_wire_encode_bytes(&variant.fields[0].field_type, module)
                     } else {
                         String::new()
                     };
@@ -311,188 +339,32 @@ impl DataEnumTemplate {
         }
     }
 
-    fn single_tuple_wire_decode(ty: &Type) -> String {
-        match ty {
-            Type::Primitive(p) => {
-                let (read_fn, size) = match p {
-                    Primitive::Bool => ("readBool", 1),
-                    Primitive::U8 => ("readU8", 1),
-                    Primitive::I8 => ("readI8", 1),
-                    Primitive::U16 => ("readU16", 2),
-                    Primitive::I16 => ("readI16", 2),
-                    Primitive::U32 => ("readU32", 4),
-                    Primitive::I32 => ("readI32", 4),
-                    Primitive::U64 => ("readU64", 8),
-                    Primitive::I64 => ("readI64", 8),
-                    Primitive::F32 => ("readF32", 4),
-                    Primitive::F64 => ("readF64", 8),
-                    Primitive::Usize => return "(UInt(wire.readU64(at: pos)), 8)".into(),
-                    Primitive::Isize => return "(Int(wire.readI64(at: pos)), 8)".into(),
-                };
-                format!("(wire.{}(at: pos), {})", read_fn, size)
-            }
-            Type::String => "wire.readString(at: pos)".into(),
-            Type::Record(name) => format!(
-                "{}.decode(wireBuffer: wire, at: pos)",
-                NamingConvention::class_name(name)
-            ),
-            _ => "(/* unsupported */, 0)".into(),
-        }
+    fn single_tuple_wire_decode(ty: &Type, module: &Module) -> String {
+        wire::decode_type(ty, module).decode_as_tuple("pos")
     }
 
-    fn enum_field_wire_decode(ty: &Type, name: &str, _idx: usize) -> String {
-        match ty {
-            Type::Primitive(p) => {
-                let (read_fn, size) = match p {
-                    Primitive::Bool => ("readBool", 1),
-                    Primitive::U8 => ("readU8", 1),
-                    Primitive::I8 => ("readI8", 1),
-                    Primitive::U16 => ("readU16", 2),
-                    Primitive::I16 => ("readI16", 2),
-                    Primitive::U32 => ("readU32", 4),
-                    Primitive::I32 => ("readI32", 4),
-                    Primitive::U64 => ("readU64", 8),
-                    Primitive::I64 => ("readI64", 8),
-                    Primitive::F32 => ("readF32", 4),
-                    Primitive::F64 => ("readF64", 8),
-                    Primitive::Usize => return format!(
-                        "let {} = UInt(wire.readU64(at: pos)); pos += 8",
-                        name
-                    ),
-                    Primitive::Isize => return format!(
-                        "let {} = Int(wire.readI64(at: pos)); pos += 8",
-                        name
-                    ),
-                };
-                format!("let {} = wire.{}(at: pos); pos += {}", name, read_fn, size)
-            }
-            Type::String => {
-                format!("let ({}, {}Size) = wire.readString(at: pos); pos += {}Size", name, name, name)
-            }
-            Type::Record(rec_name) => {
-                format!(
-                    "let ({}, {}Size) = {}.decode(wireBuffer: wire, at: pos); pos += {}Size",
-                    name,
-                    name,
-                    NamingConvention::class_name(rec_name),
-                    name
-                )
-            }
-            _ => format!("/* unsupported field type for {} */", name),
-        }
+    fn enum_field_wire_decode(ty: &Type, name: &str, module: &Module) -> String {
+        wire::decode_type(ty, module).decode_to_binding(name, "pos")
     }
 
-    fn enum_field_wire_size(ty: &Type, name: &str) -> String {
-        match ty {
-            Type::Primitive(p) => {
-                let size = match p {
-                    Primitive::Bool | Primitive::U8 | Primitive::I8 => 1,
-                    Primitive::U16 | Primitive::I16 => 2,
-                    Primitive::U32 | Primitive::I32 | Primitive::F32 => 4,
-                    Primitive::U64 | Primitive::I64 | Primitive::F64 | Primitive::Usize | Primitive::Isize => 8,
-                };
-                size.to_string()
-            }
-            Type::String => format!("(4 + {}.utf8.count)", name),
-            Type::Record(_) => format!("{}.wireEncodedSize()", name),
-            _ => "0".into(),
-        }
+    fn enum_field_wire_size(ty: &Type, name: &str, module: &Module) -> String {
+        wire::encode_type(ty, name, module).size_expr
     }
 
-    fn enum_field_wire_encode(ty: &Type, name: &str) -> String {
-        match ty {
-            Type::Primitive(p) => {
-                let encode_fn = match p {
-                    Primitive::Bool => "appendBool",
-                    Primitive::U8 => "appendU8",
-                    Primitive::U16 => "appendU16",
-                    Primitive::U32 => "appendU32",
-                    Primitive::U64 | Primitive::Usize => "appendU64",
-                    Primitive::I8 => "appendI8",
-                    Primitive::I16 => "appendI16",
-                    Primitive::I32 => "appendI32",
-                    Primitive::I64 | Primitive::Isize => "appendI64",
-                    Primitive::F32 => "appendF32",
-                    Primitive::F64 => "appendF64",
-                };
-                format!("data.{}({})", encode_fn, name)
-            }
-            Type::String => format!("data.appendString({})", name),
-            Type::Record(_) => format!("{}.wireEncodeTo(&data)", name),
-            _ => format!("/* unsupported encode for {} */", name),
-        }
+    fn enum_field_wire_encode(ty: &Type, name: &str, module: &Module) -> String {
+        wire::encode_type(ty, name, module).encode_to_data
     }
 
-    fn single_tuple_wire_encode(ty: &Type) -> String {
-        match ty {
-            Type::Primitive(p) => {
-                let encode_fn = match p {
-                    Primitive::Bool => "appendBool",
-                    Primitive::U8 => "appendU8",
-                    Primitive::U16 => "appendU16",
-                    Primitive::U32 => "appendU32",
-                    Primitive::U64 | Primitive::Usize => "appendU64",
-                    Primitive::I8 => "appendI8",
-                    Primitive::I16 => "appendI16",
-                    Primitive::I32 => "appendI32",
-                    Primitive::I64 | Primitive::Isize => "appendI64",
-                    Primitive::F32 => "appendF32",
-                    Primitive::F64 => "appendF64",
-                };
-                format!("data.{}(value)", encode_fn)
-            }
-            Type::String => "data.appendString(value)".into(),
-            Type::Record(_) => "value.wireEncodeTo(&data)".into(),
-            _ => "/* unsupported single tuple encode */".into(),
-        }
+    fn single_tuple_wire_encode(ty: &Type, module: &Module) -> String {
+        wire::encode_type(ty, "value", module).encode_to_data
     }
 
-    fn enum_field_wire_encode_bytes(ty: &Type, name: &str) -> String {
-        match ty {
-            Type::Primitive(p) => {
-                let encode_fn = match p {
-                    Primitive::Bool => "appendBool",
-                    Primitive::U8 => "appendU8",
-                    Primitive::U16 => "appendU16",
-                    Primitive::U32 => "appendU32",
-                    Primitive::U64 | Primitive::Usize => "appendU64",
-                    Primitive::I8 => "appendI8",
-                    Primitive::I16 => "appendI16",
-                    Primitive::I32 => "appendI32",
-                    Primitive::I64 | Primitive::Isize => "appendI64",
-                    Primitive::F32 => "appendF32",
-                    Primitive::F64 => "appendF64",
-                };
-                format!("bytes.{}({})", encode_fn, name)
-            }
-            Type::String => format!("bytes.appendString({})", name),
-            Type::Record(_) => format!("{}.wireEncodeToBytes(&bytes)", name),
-            _ => format!("/* unsupported encode for {} */", name),
-        }
+    fn enum_field_wire_encode_bytes(ty: &Type, name: &str, module: &Module) -> String {
+        wire::encode_type(ty, name, module).encode_to_bytes
     }
 
-    fn single_tuple_wire_encode_bytes(ty: &Type) -> String {
-        match ty {
-            Type::Primitive(p) => {
-                let encode_fn = match p {
-                    Primitive::Bool => "appendBool",
-                    Primitive::U8 => "appendU8",
-                    Primitive::U16 => "appendU16",
-                    Primitive::U32 => "appendU32",
-                    Primitive::U64 | Primitive::Usize => "appendU64",
-                    Primitive::I8 => "appendI8",
-                    Primitive::I16 => "appendI16",
-                    Primitive::I32 => "appendI32",
-                    Primitive::I64 | Primitive::Isize => "appendI64",
-                    Primitive::F32 => "appendF32",
-                    Primitive::F64 => "appendF64",
-                };
-                format!("bytes.{}(value)", encode_fn)
-            }
-            Type::String => "bytes.appendString(value)".into(),
-            Type::Record(_) => "value.wireEncodeToBytes(&bytes)".into(),
-            _ => "/* unsupported single tuple encode */".into(),
-        }
+    fn single_tuple_wire_encode_bytes(ty: &Type, module: &Module) -> String {
+        wire::encode_type(ty, "value", module).encode_to_bytes
     }
 }
 
@@ -689,8 +561,8 @@ pub struct StreamAsyncBodyTemplate {
 }
 
 impl StreamAsyncBodyTemplate {
-    pub fn from_stream(stream: &StreamMethod, class: &Class, _module: &Module) -> Self {
-        let item_decode_expr = Self::item_decode(&stream.item_type);
+    pub fn from_stream(stream: &StreamMethod, class: &Class, module: &Module) -> Self {
+        let item_decode_expr = Self::item_decode(&stream.item_type, module);
         Self {
             item_type: TypeMapper::map_type(&stream.item_type),
             item_decode_expr,
@@ -704,33 +576,8 @@ impl StreamAsyncBodyTemplate {
         }
     }
 
-    fn item_decode(ty: &Type) -> String {
-        match ty {
-            Type::Primitive(p) => {
-                let (read_fn, size) = match p {
-                    Primitive::Bool => ("readBool", 1),
-                    Primitive::U8 => ("readU8", 1),
-                    Primitive::I8 => ("readI8", 1),
-                    Primitive::U16 => ("readU16", 2),
-                    Primitive::I16 => ("readI16", 2),
-                    Primitive::U32 => ("readU32", 4),
-                    Primitive::I32 => ("readI32", 4),
-                    Primitive::U64 => ("readU64", 8),
-                    Primitive::I64 => ("readI64", 8),
-                    Primitive::F32 => ("readF32", 4),
-                    Primitive::F64 => ("readF64", 8),
-                    Primitive::Usize => return "{ let v = UInt(wire.readU64(at: offset)); offset += 8; return v }()".into(),
-                    Primitive::Isize => return "{ let v = Int(wire.readI64(at: offset)); offset += 8; return v }()".into(),
-                };
-                format!("{{ let v = wire.{}(at: offset); offset += {}; return v }}()", read_fn, size)
-            }
-            Type::String => "{ let (v, s) = wire.readString(at: offset); offset += s; return v }()".into(),
-            Type::Record(name) => format!(
-                "{{ let (v, s) = {}.decode(wireBuffer: wire, at: offset); offset += s; return v }}()",
-                NamingConvention::class_name(name)
-            ),
-            _ => "/* unsupported stream item type */".into(),
-        }
+    fn item_decode(ty: &Type, module: &Module) -> String {
+        wire::decode_type(ty, module).as_stream_item_closure("offset")
     }
 }
 
@@ -787,7 +634,6 @@ impl StreamCallbackBodyTemplate {
 pub struct SyncMethodBodyTemplate {
     pub ffi_name: String,
     pub has_return: bool,
-    pub has_wrappers: bool,
     pub wrappers_open: String,
     pub wrappers_close: String,
     pub ffi_args: String,
@@ -795,22 +641,18 @@ pub struct SyncMethodBodyTemplate {
 
 impl SyncMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
-        let ffi_name = naming::method_ffi_name(&class.name, &method.name);
-        let call_builder = SyncCallBuilder::new(true).with_params(
-            method
-                .non_callback_params()
-                .map(|p| (p.name.as_str(), &p.param_type)),
-            module,
-        );
-
+        let ctx = MethodContext::from_method(method, class, module, true);
         Self {
-            ffi_name,
+            ffi_name: ctx.ffi_name,
             has_return: method.returns.has_return_value(),
-            has_wrappers: call_builder.has_wrappers(),
-            wrappers_open: call_builder.build_wrappers_open(),
-            wrappers_close: call_builder.build_wrappers_close(),
-            ffi_args: call_builder.build_ffi_args(),
+            wrappers_open: ctx.wrappers_open,
+            wrappers_close: ctx.wrappers_close,
+            ffi_args: ctx.ffi_args,
         }
+    }
+
+    pub fn has_wrappers(&self) -> bool {
+        !self.wrappers_open.is_empty()
     }
 }
 
@@ -820,7 +662,6 @@ pub struct CallbackMethodBodyTemplate {
     pub ffi_name: String,
     pub has_return: bool,
     pub callbacks: Vec<super::conversion::CallbackInfo>,
-    pub has_wrappers: bool,
     pub wrappers_open: String,
     pub wrappers_close: String,
     pub ffi_args: String,
@@ -829,22 +670,11 @@ pub struct CallbackMethodBodyTemplate {
 
 impl CallbackMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
-        let ffi_name = naming::method_ffi_name(&class.name, &method.name);
-        let call_builder = SyncCallBuilder::new(true).with_params(
-            method
-                .non_callback_params()
-                .map(|p| (p.name.as_str(), &p.param_type)),
-            module,
-        );
-
+        let ctx = MethodContext::from_method(method, class, module, true);
         let params_info = super::conversion::ParamsInfo::from_inputs(
-            method
-                .inputs
-                .iter()
-                .map(|p| (p.name.as_str(), &p.param_type)),
+            method.inputs.iter().map(|p| (p.name.as_str(), &p.param_type)),
             &NamingConvention::class_name(&method.name),
         );
-
         let callback_args = params_info
             .callbacks
             .iter()
@@ -853,15 +683,18 @@ impl CallbackMethodBodyTemplate {
             .join(", ");
 
         Self {
-            ffi_name,
+            ffi_name: ctx.ffi_name,
             has_return: method.returns.has_return_value(),
             callbacks: params_info.callbacks,
-            has_wrappers: call_builder.has_wrappers(),
-            wrappers_open: call_builder.build_wrappers_open(),
-            wrappers_close: call_builder.build_wrappers_close(),
-            ffi_args: call_builder.build_ffi_args(),
+            wrappers_open: ctx.wrappers_open,
+            wrappers_close: ctx.wrappers_close,
+            ffi_args: ctx.ffi_args,
             callback_args,
         }
+    }
+
+    pub fn has_wrappers(&self) -> bool {
+        !self.wrappers_open.is_empty()
     }
 }
 
@@ -870,7 +703,6 @@ impl CallbackMethodBodyTemplate {
 pub struct ThrowingMethodBodyTemplate {
     pub ffi_name: String,
     pub prefix: String,
-    pub has_wrappers: bool,
     pub wrappers_open: String,
     pub wrappers_close: String,
     pub ffi_args: String,
@@ -879,25 +711,20 @@ pub struct ThrowingMethodBodyTemplate {
 
 impl ThrowingMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
-        let ffi_name = naming::method_ffi_name(&class.name, &method.name);
-        let call_builder = SyncCallBuilder::new(false).with_params(
-            method
-                .inputs
-                .iter()
-                .map(|p| (p.name.as_str(), &p.param_type)),
-            module,
-        );
+        let ctx = MethodContext::from_method_all_params(method, class, module);
         let return_abi = ReturnAbi::from_return_type(&method.returns, module);
-
         Self {
-            ffi_name,
+            ffi_name: ctx.ffi_name,
             prefix: naming::ffi_prefix().to_string(),
-            has_wrappers: call_builder.has_wrappers(),
-            wrappers_open: call_builder.build_wrappers_open(),
-            wrappers_close: call_builder.build_wrappers_close(),
-            ffi_args: call_builder.build_ffi_args(),
+            wrappers_open: ctx.wrappers_open,
+            wrappers_close: ctx.wrappers_close,
+            ffi_args: ctx.ffi_args,
             decode_expr: return_abi.decode_expr().to_string(),
         }
+    }
+
+    pub fn has_wrappers(&self) -> bool {
+        !self.wrappers_open.is_empty()
     }
 }
 
@@ -910,26 +737,27 @@ pub struct AsyncMethodBodyTemplate {
     pub ffi_cancel: String,
     pub ffi_free: String,
     pub prefix: String,
-    pub args: Vec<String>,
+    pub wrappers_open: String,
+    pub wrappers_close: String,
+    pub ffi_args: String,
     pub return_type: String,
     pub decode_expr: String,
 }
 
 impl AsyncMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
+        let ctx = MethodContext::from_method(method, class, module, true);
         let return_abi = ReturnAbi::from_return_type(&method.returns, module);
         Self {
-            ffi_name: naming::method_ffi_name(&class.name, &method.name),
+            ffi_name: ctx.ffi_name,
             ffi_poll: naming::method_ffi_poll(&class.name, &method.name),
             ffi_complete: naming::method_ffi_complete(&class.name, &method.name),
             ffi_cancel: naming::method_ffi_cancel(&class.name, &method.name),
             ffi_free: naming::method_ffi_free(&class.name, &method.name),
             prefix: naming::ffi_prefix().to_string(),
-            args: method
-                .inputs
-                .iter()
-                .map(|p| NamingConvention::param_name(&p.name))
-                .collect(),
+            wrappers_open: ctx.wrappers_open,
+            wrappers_close: ctx.wrappers_close,
+            ffi_args: ctx.ffi_args,
             return_type: method
                 .returns
                 .ok_type()
@@ -937,6 +765,10 @@ impl AsyncMethodBodyTemplate {
                 .unwrap_or_else(|| "Void".into()),
             decode_expr: return_abi.decode_expr().to_string(),
         }
+    }
+
+    pub fn has_wrappers(&self) -> bool {
+        !self.wrappers_open.is_empty()
     }
 }
 
@@ -949,26 +781,27 @@ pub struct AsyncThrowingMethodBodyTemplate {
     pub ffi_cancel: String,
     pub ffi_free: String,
     pub prefix: String,
-    pub args: Vec<String>,
+    pub wrappers_open: String,
+    pub wrappers_close: String,
+    pub ffi_args: String,
     pub return_type: String,
     pub decode_expr: String,
 }
 
 impl AsyncThrowingMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
+        let ctx = MethodContext::from_method(method, class, module, true);
         let return_abi = ReturnAbi::from_return_type(&method.returns, module);
         Self {
-            ffi_name: naming::method_ffi_name(&class.name, &method.name),
+            ffi_name: ctx.ffi_name,
             ffi_poll: naming::method_ffi_poll(&class.name, &method.name),
             ffi_complete: naming::method_ffi_complete(&class.name, &method.name),
             ffi_cancel: naming::method_ffi_cancel(&class.name, &method.name),
             ffi_free: naming::method_ffi_free(&class.name, &method.name),
             prefix: naming::ffi_prefix().to_string(),
-            args: method
-                .inputs
-                .iter()
-                .map(|p| NamingConvention::param_name(&p.name))
-                .collect(),
+            wrappers_open: ctx.wrappers_open,
+            wrappers_close: ctx.wrappers_close,
+            ffi_args: ctx.ffi_args,
             return_type: method
                 .returns
                 .ok_type()
@@ -976,6 +809,10 @@ impl AsyncThrowingMethodBodyTemplate {
                 .unwrap_or_else(|| "Void".into()),
             decode_expr: return_abi.decode_expr().to_string(),
         }
+    }
+
+    pub fn has_wrappers(&self) -> bool {
+        !self.wrappers_open.is_empty()
     }
 }
 

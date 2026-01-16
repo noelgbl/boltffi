@@ -8,7 +8,7 @@
             Unmanaged<{{ cb.box_type }}>.fromOpaque(ud!).takeUnretainedValue().fn_({{ cb.trampoline_call_args }})
         }
 {%- endfor %}
-{%- if has_wrappers %}
+{%- if self.has_wrappers() %}
         {% if has_return %}return {% endif %}{{ wrappers_open }}
             {%- if has_return %}
             let result = {{ ffi_name }}({{ ffi_args }}{% if callback_args.len() > 0 %}, {{ callback_args }}{% endif %})
