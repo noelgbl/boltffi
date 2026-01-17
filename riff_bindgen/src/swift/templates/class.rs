@@ -50,8 +50,12 @@ impl ClassTemplate {
                         },
                         is_failable: false,
                         is_factory,
-                        first_param_name: first_param.map(|p| p.swift_name.clone()).unwrap_or_default(),
-                        first_param_type: first_param.map(|p| p.swift_type.clone()).unwrap_or_default(),
+                        first_param_name: first_param
+                            .map(|p| p.swift_name.clone())
+                            .unwrap_or_default(),
+                        first_param_type: first_param
+                            .map(|p| p.swift_type.clone())
+                            .unwrap_or_default(),
                         rest_params,
                         params: params_info.params,
                     }

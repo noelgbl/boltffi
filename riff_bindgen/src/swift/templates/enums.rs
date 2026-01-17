@@ -65,10 +65,23 @@ impl DataEnumTemplate {
                         .map(|field| {
                             let swift_name = NamingConvention::param_name(&field.name);
                             let c_name = field.name.clone();
-                            let wire_decode = Self::enum_field_wire_decode(&field.field_type, &swift_name, module);
-                            let wire_size = Self::enum_field_wire_size(&field.field_type, &swift_name, module);
-                            let wire_encode = Self::enum_field_wire_encode(&field.field_type, &swift_name, module);
-                            let wire_encode_bytes = Self::enum_field_wire_encode_bytes(&field.field_type, &swift_name, module);
+                            let wire_decode = Self::enum_field_wire_decode(
+                                &field.field_type,
+                                &swift_name,
+                                module,
+                            );
+                            let wire_size =
+                                Self::enum_field_wire_size(&field.field_type, &swift_name, module);
+                            let wire_encode = Self::enum_field_wire_encode(
+                                &field.field_type,
+                                &swift_name,
+                                module,
+                            );
+                            let wire_encode_bytes = Self::enum_field_wire_encode_bytes(
+                                &field.field_type,
+                                &swift_name,
+                                module,
+                            );
                             EnumFieldView {
                                 needs_alias: swift_name != c_name,
                                 swift_name,
@@ -91,7 +104,8 @@ impl DataEnumTemplate {
                     } else {
                         String::new()
                     };
-                    let wire_encode_bytes_single = if is_single_tuple && !variant.fields.is_empty() {
+                    let wire_encode_bytes_single = if is_single_tuple && !variant.fields.is_empty()
+                    {
                         Self::single_tuple_wire_encode_bytes(&variant.fields[0].field_type, module)
                     } else {
                         String::new()

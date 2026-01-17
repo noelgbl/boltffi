@@ -67,7 +67,11 @@ impl FunctionTemplate {
         };
 
         let return_abi = ReturnAbi::from_return_type(&function.returns, module);
-        let direct_call = return_abi.direct_call_expr(&format!("{}({})", ffi_name, call_builder.build_ffi_args()));
+        let direct_call = return_abi.direct_call_expr(&format!(
+            "{}({})",
+            ffi_name,
+            call_builder.build_ffi_args()
+        ));
 
         Self {
             prefix: naming::ffi_prefix().to_string(),

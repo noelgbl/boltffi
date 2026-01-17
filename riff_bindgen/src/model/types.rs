@@ -5,7 +5,10 @@ pub enum ReturnType {
     #[default]
     Void,
     Value(Type),
-    Fallible { ok: Type, err: Type },
+    Fallible {
+        ok: Type,
+        err: Type,
+    },
 }
 
 impl ReturnType {
@@ -171,13 +174,23 @@ impl Primitive {
     }
 
     pub fn is_unsigned(self) -> bool {
-        matches!(self, Self::U8 | Self::U16 | Self::U32 | Self::U64 | Self::Usize)
+        matches!(
+            self,
+            Self::U8 | Self::U16 | Self::U32 | Self::U64 | Self::Usize
+        )
     }
 
     pub fn fits_in_32_bits(self) -> bool {
         matches!(
             self,
-            Self::Bool | Self::I8 | Self::U8 | Self::I16 | Self::U16 | Self::I32 | Self::U32 | Self::F32
+            Self::Bool
+                | Self::I8
+                | Self::U8
+                | Self::I16
+                | Self::U16
+                | Self::I32
+                | Self::U32
+                | Self::F32
         )
     }
 

@@ -142,8 +142,14 @@ mod tests {
         assert!(output.contains("static func decode(wireBuffer wire: WireBuffer, at offset: Int)"));
 
         let sensor_record = Record::new("SensorData")
-            .with_field(RecordField::new("sensor_id", Type::Primitive(Primitive::I32)))
-            .with_field(RecordField::new("timestamp_ms", Type::Primitive(Primitive::U64)));
+            .with_field(RecordField::new(
+                "sensor_id",
+                Type::Primitive(Primitive::I32),
+            ))
+            .with_field(RecordField::new(
+                "timestamp_ms",
+                Type::Primitive(Primitive::U64),
+            ));
         let output = Swift::render_record(&sensor_record, &module);
         assert!(output.contains("public struct SensorData: Hashable, Equatable, Sendable"));
         assert!(output.contains("public let sensorId: Int32"));

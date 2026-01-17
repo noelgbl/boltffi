@@ -47,7 +47,10 @@ impl DataEnumLayout {
                     })
                     .unwrap_or_else(|| {
                         let struct_layout = StructLayout::from_layouts(
-                            variant.fields.iter().map(|field| field.field_type.c_layout()),
+                            variant
+                                .fields
+                                .iter()
+                                .map(|field| field.field_type.c_layout()),
                         );
 
                         DataEnumVariantLayout {
@@ -75,8 +78,8 @@ impl DataEnumLayout {
         let union_size = Size::new(union_size_unpadded).padded_to(union_alignment);
         let payload_offset = (Offset::ZERO + tag_layout.size).aligned_to(union_alignment);
         let struct_alignment = tag_layout.alignment.max(union_alignment);
-        let struct_size =
-            Size::new(payload_offset.as_usize() + union_size.as_usize()).padded_to(struct_alignment);
+        let struct_size = Size::new(payload_offset.as_usize() + union_size.as_usize())
+            .padded_to(struct_alignment);
 
         Some(Self {
             struct_size,

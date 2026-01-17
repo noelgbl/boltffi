@@ -36,9 +36,16 @@ pub(crate) struct MethodContext {
 }
 
 impl MethodContext {
-    pub fn from_method(method: &Method, class: &Class, module: &Module, include_handle: bool) -> Self {
+    pub fn from_method(
+        method: &Method,
+        class: &Class,
+        module: &Module,
+        include_handle: bool,
+    ) -> Self {
         let call_builder = SyncCallBuilder::new(include_handle).with_params(
-            method.non_callback_params().map(|p| (p.name.as_str(), &p.param_type)),
+            method
+                .non_callback_params()
+                .map(|p| (p.name.as_str(), &p.param_type)),
             module,
         );
         Self {
@@ -51,7 +58,10 @@ impl MethodContext {
 
     pub fn from_method_all_params(method: &Method, class: &Class, module: &Module) -> Self {
         let call_builder = SyncCallBuilder::new(false).with_params(
-            method.inputs.iter().map(|p| (p.name.as_str(), &p.param_type)),
+            method
+                .inputs
+                .iter()
+                .map(|p| (p.name.as_str(), &p.param_type)),
             module,
         );
         Self {

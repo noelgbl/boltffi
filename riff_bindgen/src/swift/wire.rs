@@ -1,5 +1,5 @@
-use crate::model::{Module, Primitive, Type};
 use super::names::NamingConvention;
+use crate::model::{Module, Primitive, Type};
 
 const OFFSET_PLACEHOLDER: &str = "OFFSET";
 
@@ -97,14 +97,20 @@ pub fn decode_type(ty: &Type, module: &Module) -> TypeCodec {
         Type::Vec(inner) => decode_vec(inner, module),
         Type::Option(inner) => decode_option(inner, module),
         Type::Result { ok, err } => decode_result(ok, err, module),
-        Type::Bytes => TypeCodec::variable(format!("wire.readBytesWithSize(at: {})", OFFSET_PLACEHOLDER)),
+        Type::Bytes => TypeCodec::variable(format!(
+            "wire.readBytesWithSize(at: {})",
+            OFFSET_PLACEHOLDER
+        )),
         other => panic!("wire decode not supported for type: {:?}", other),
     }
 }
 
 fn decode_primitive(p: Primitive) -> TypeCodec {
     let (read_fn, size) = primitive_wire_info(p);
-    TypeCodec::fixed(format!("wire.{}(at: {})", read_fn, OFFSET_PLACEHOLDER), size)
+    TypeCodec::fixed(
+        format!("wire.{}(at: {})", read_fn, OFFSET_PLACEHOLDER),
+        size,
+    )
 }
 
 fn decode_record(name: &str, module: &Module) -> TypeCodec {
@@ -124,11 +130,17 @@ fn decode_record(name: &str, module: &Module) -> TypeCodec {
             .map(|r| r.struct_size().as_usize())
             .unwrap_or(0);
         TypeCodec::fixed(
-            format!("wire.readBlittable(at: {}, as: {}.self)", OFFSET_PLACEHOLDER, class_name),
+            format!(
+                "wire.readBlittable(at: {}, as: {}.self)",
+                OFFSET_PLACEHOLDER, class_name
+            ),
             size,
         )
     } else {
-        TypeCodec::variable(format!("{}.decode(wireBuffer: wire, at: {})", class_name, OFFSET_PLACEHOLDER))
+        TypeCodec::variable(format!(
+            "{}.decode(wireBuffer: wire, at: {})",
+            class_name, OFFSET_PLACEHOLDER
+        ))
     }
 }
 
@@ -137,15 +149,27 @@ fn decode_enum(name: &str, module: &Module) -> TypeCodec {
     let is_data = module.is_data_enum(name);
 
     if is_data {
-        TypeCodec::variable(format!("{}.decode(wireBuffer: wire, at: {})", class_name, OFFSET_PLACEHOLDER))
+        TypeCodec::variable(format!(
+            "{}.decode(wireBuffer: wire, at: {})",
+            class_name, OFFSET_PLACEHOLDER
+        ))
     } else {
-        TypeCodec::fixed(format!("{}(fromC: wire.readI32(at: {}))", class_name, OFFSET_PLACEHOLDER), 4)
+        TypeCodec::fixed(
+            format!(
+                "{}(fromC: wire.readI32(at: {}))",
+                class_name, OFFSET_PLACEHOLDER
+            ),
+            4,
+        )
     }
 }
 
 fn decode_vec(inner: &Type, module: &Module) -> TypeCodec {
     if let Type::Primitive(Primitive::U8) = inner {
-        return TypeCodec::variable(format!("wire.readBytesWithSize(at: {})", OFFSET_PLACEHOLDER));
+        return TypeCodec::variable(format!(
+            "wire.readBytesWithSize(at: {})",
+            OFFSET_PLACEHOLDER
+        ));
     }
 
     if let Type::Record(name) = inner {
@@ -167,7 +191,8 @@ fn decode_vec(inner: &Type, module: &Module) -> TypeCodec {
     let inner_codec = decode_type(inner, module);
     TypeCodec::variable(format!(
         "wire.readArray(at: {}, reader: {{ {} }})",
-        OFFSET_PLACEHOLDER, inner_codec.as_tuple_reader()
+        OFFSET_PLACEHOLDER,
+        inner_codec.as_tuple_reader()
     ))
 }
 
@@ -175,7 +200,8 @@ fn decode_option(inner: &Type, module: &Module) -> TypeCodec {
     let inner_codec = decode_type(inner, module);
     TypeCodec::variable(format!(
         "wire.readOptional(at: {}, reader: {{ {} }})",
-        OFFSET_PLACEHOLDER, inner_codec.as_tuple_reader()
+        OFFSET_PLACEHOLDER,
+        inner_codec.as_tuple_reader()
     ))
 }
 
@@ -274,8 +300,14 @@ fn encode_record(record_name: &str, field_name: &str, module: &Module) -> TypeEn
             .unwrap_or(0);
         TypeEncoder {
             size_expr: size.to_string(),
-            encode_to_data: format!("withUnsafeBytes(of: {}) {{ data.append(contentsOf: $0) }}", field_name),
-            encode_to_bytes: format!("withUnsafeBytes(of: {}) {{ bytes.append(contentsOf: $0) }}", field_name),
+            encode_to_data: format!(
+                "withUnsafeBytes(of: {}) {{ data.append(contentsOf: $0) }}",
+                field_name
+            ),
+            encode_to_bytes: format!(
+                "withUnsafeBytes(of: {}) {{ bytes.append(contentsOf: $0) }}",
+                field_name
+            ),
         }
     } else {
         TypeEncoder {
@@ -306,7 +338,7 @@ fn encode_enum(enum_name: &str, field_name: &str, module: &Module) -> TypeEncode
 
 fn encode_vec(inner: &Type, name: &str, module: &Module) -> TypeEncoder {
     let inner_encoder = encode_type(inner, "ITEM", module);
-    
+
     let is_blittable_record = matches!(inner, Type::Record(rec_name) if module
         .records
         .iter()
@@ -317,7 +349,11 @@ fn encode_vec(inner: &Type, name: &str, module: &Module) -> TypeEncoder {
     let size_expr = match inner {
         Type::Primitive(p) => format!("(4 + {}.count * {})", name, p.size_bytes()),
         Type::Record(_) if is_blittable_record => {
-            format!("(4 + {}.count * {})", name, inner_encoder.size_expr.replace("ITEM", ""))
+            format!(
+                "(4 + {}.count * {})",
+                name,
+                inner_encoder.size_expr.replace("ITEM", "")
+            )
         }
         _ => {
             let inner_size = inner_encoder.size_expr.replace("ITEM", "$1");

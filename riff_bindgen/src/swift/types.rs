@@ -1,7 +1,7 @@
 use crate::model::Type;
 
-use super::primitives;
 use super::NamingConvention;
+use super::primitives;
 
 pub struct TypeMapper;
 
@@ -15,7 +15,9 @@ impl TypeMapper {
             Type::MutSlice(inner) => format!("[{}]", Self::map_type(inner)),
             Type::Vec(inner) => format!("[{}]", Self::map_type(inner)),
             Type::Option(inner) => format!("{}?", Self::map_type(inner)),
-            Type::Result { ok, err } => format!("Result<{}, {}>", Self::map_type(ok), Self::map_type(err)),
+            Type::Result { ok, err } => {
+                format!("Result<{}, {}>", Self::map_type(ok), Self::map_type(err))
+            }
             Type::Closure(sig) => {
                 let params = sig
                     .params

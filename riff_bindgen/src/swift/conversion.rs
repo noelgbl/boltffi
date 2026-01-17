@@ -64,13 +64,18 @@ impl ParamInfo {
         let is_slice = matches!(ty, Type::Slice(_));
         let is_mut_slice = matches!(ty, Type::MutSlice(_));
         let is_vec = matches!(ty, Type::Vec(_));
-        let is_vec_wire_encoded = matches!(ty, Type::Vec(inner) if !matches!(inner.as_ref(), Type::Primitive(_)));
+        let is_vec_wire_encoded =
+            matches!(ty, Type::Vec(inner) if !matches!(inner.as_ref(), Type::Primitive(_)));
         let is_escaping = matches!(ty, Type::Closure(_));
 
         let ffi_conversion = match ty {
             Type::Enum(_) => format!("{}.cValue", swift_name),
             Type::BoxedTrait(trait_name) => {
-                format!("{}Bridge.create({})", NamingConvention::class_name(trait_name), swift_name)
+                format!(
+                    "{}Bridge.create({})",
+                    NamingConvention::class_name(trait_name),
+                    swift_name
+                )
             }
             _ => swift_name.clone(),
         };
@@ -198,7 +203,9 @@ impl ParamsInfo {
             params.push(ParamInfo::from_param(name, ty));
 
             if matches!(ty, Type::Closure(_)) {
-                if let Some(cb) = CallbackInfo::from_param(name, ty, func_name_pascal, callback_index) {
+                if let Some(cb) =
+                    CallbackInfo::from_param(name, ty, func_name_pascal, callback_index)
+                {
                     callbacks.push(cb);
                     callback_index += 1;
                 }

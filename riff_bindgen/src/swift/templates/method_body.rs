@@ -52,7 +52,10 @@ impl CallbackMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
         let ctx = MethodContext::from_method(method, class, module, true);
         let params_info = ParamsInfo::from_inputs(
-            method.inputs.iter().map(|p| (p.name.as_str(), &p.param_type)),
+            method
+                .inputs
+                .iter()
+                .map(|p| (p.name.as_str(), &p.param_type)),
             &NamingConvention::class_name(&method.name),
         );
         let callback_args = params_info

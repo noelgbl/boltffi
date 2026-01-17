@@ -22,7 +22,10 @@ impl RecordTemplate {
             .enumerate()
             .map(|(idx, field)| Self::make_field(field, idx, module))
             .collect();
-        let is_blittable = record.fields.iter().all(|f| Self::is_type_blittable(&f.field_type));
+        let is_blittable = record
+            .fields
+            .iter()
+            .all(|f| Self::is_type_blittable(&f.field_type));
         Self {
             class_name: NamingConvention::class_name(&record.name),
             fields,
@@ -37,7 +40,7 @@ impl RecordTemplate {
     fn make_field(field: &crate::model::RecordField, _idx: usize, module: &Module) -> FieldView {
         let swift_name = NamingConvention::property_name(&field.name);
         let encoder = wire::encode_type(&field.field_type, &swift_name, module);
-        
+
         FieldView {
             swift_name: swift_name.clone(),
             swift_type: TypeMapper::map_type(&field.field_type),

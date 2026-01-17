@@ -303,7 +303,11 @@ impl SourceScanner {
             })
             .collect();
 
-        self.enums.push(ScannedEnum { name, variants, is_error });
+        self.enums.push(ScannedEnum {
+            name,
+            variants,
+            is_error,
+        });
     }
 
     fn process_function(&mut self, item_fn: &syn::ItemFn) {
@@ -528,9 +532,11 @@ impl SourceScanner {
     }
 
     fn is_constructor(&self, method: &syn::ImplItemFn, class_name: &str) -> bool {
-        let has_self_receiver = method.sig.inputs.iter().any(|arg| {
-            matches!(arg, syn::FnArg::Receiver(_))
-        });
+        let has_self_receiver = method
+            .sig
+            .inputs
+            .iter()
+            .any(|arg| matches!(arg, syn::FnArg::Receiver(_)));
         if has_self_receiver {
             return false;
         }
@@ -540,7 +546,9 @@ impl SourceScanner {
             syn::ReturnType::Type(_, ty) => {
                 if let syn::Type::Path(type_path) = ty.as_ref() {
                     let last_segment = type_path.path.segments.last();
-                    last_segment.map(|s| s.ident == "Self" || s.ident == class_name).unwrap_or(false)
+                    last_segment
+                        .map(|s| s.ident == "Self" || s.ident == class_name)
+                        .unwrap_or(false)
                 } else {
                     false
                 }

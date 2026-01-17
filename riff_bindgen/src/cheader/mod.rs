@@ -28,7 +28,11 @@ impl CHeaderGenerator {
         out.push_str(&Self::generate_enums(&module.enums));
         out.push_str(&Self::generate_ffi_named_buf_types(module));
         out.push_str(&Self::generate_ffi_named_option_types(module));
-        out.push_str(&Self::generate_traits(&module.callback_traits, &prefix, module));
+        out.push_str(&Self::generate_traits(
+            &module.callback_traits,
+            &prefix,
+            module,
+        ));
         out.push_str(&Self::generate_functions(&module.functions, module));
         out.push_str(&Self::generate_classes(&module.classes, &prefix, module));
         out.push_str(&Self::generate_free_functions(&prefix));
@@ -162,7 +166,11 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
                         match inner.as_ref() {
                             Type::Vec(vec_inner) => {
                                 insert_vec_buf_type(vec_inner, primitive_buf, named_buf);
-                                insert_vec_buf_type(vec_inner, option_primitive_buf, option_named_buf);
+                                insert_vec_buf_type(
+                                    vec_inner,
+                                    option_primitive_buf,
+                                    option_named_buf,
+                                );
                             }
                             Type::Primitive(p) => {
                                 prim_opts.insert(p.rust_name().to_string());
@@ -217,7 +225,7 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
         let mut option_named_buf_vec: Vec<_> = option_named_buf_types.into_iter().collect();
         let mut prim_vec: Vec<_> = primitive_option_types.into_iter().collect();
         let mut named_vec: Vec<_> = named_option_types.into_iter().collect();
-        
+
         primitive_buf_vec.sort();
         named_buf_vec.sort();
         option_primitive_buf_vec.sort();
@@ -330,14 +338,15 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
         let mut next_value: i64 = 0;
         for variant in &e.variants {
             let value = variant.discriminant.unwrap_or(next_value);
-            out.push_str(&format!("#define {}_{} {}\n", hidden_name, variant.name, value));
+            out.push_str(&format!(
+                "#define {}_{} {}\n",
+                hidden_name, variant.name, value
+            ));
             next_value = value + 1;
         }
         out.push('\n');
         out
     }
-
-
 
     fn generate_traits(traits: &[CallbackTrait], prefix: &str, module: &Module) -> String {
         traits
@@ -546,7 +555,11 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
             }
             Type::String => {
                 let mut new_params = params.to_vec();
-                let out_name = if err_out_type.is_some() { "out_ok" } else { "out" };
+                let out_name = if err_out_type.is_some() {
+                    "out_ok"
+                } else {
+                    "out"
+                };
                 new_params.push((out_name.to_string(), "FfiString *".to_string()));
                 if let Some(err_type_str) = &err_out_type {
                     new_params.push(("out_err".to_string(), format!("{} *", err_type_str)));
@@ -556,8 +569,15 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
             }
             _ => {
                 let mut new_params = params.to_vec();
-                let out_name = if err_out_type.is_some() { "out_ok" } else { "out" };
-                new_params.push((out_name.to_string(), format!("{} *", Self::type_to_c(ok_type))));
+                let out_name = if err_out_type.is_some() {
+                    "out_ok"
+                } else {
+                    "out"
+                };
+                new_params.push((
+                    out_name.to_string(),
+                    format!("{} *", Self::type_to_c(ok_type)),
+                ));
                 if let Some(err_type_str) = &err_out_type {
                     new_params.push(("out_err".to_string(), format!("{} *", err_type_str)));
                 }
@@ -594,7 +614,10 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
         }
     }
 
-    fn generate_option_string_return_function(ffi_name: &str, params: &[(String, String)]) -> String {
+    fn generate_option_string_return_function(
+        ffi_name: &str,
+        params: &[(String, String)],
+    ) -> String {
         let params_str = Self::format_params(params);
         format!("FfiOption_FfiString {}({});\n", ffi_name, params_str)
     }
@@ -650,7 +673,12 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
         ));
 
         for method in &class.methods {
-            out.push_str(&Self::generate_method(method, &class.name, &class_prefix, module));
+            out.push_str(&Self::generate_method(
+                method,
+                &class.name,
+                &class_prefix,
+                module,
+            ));
         }
 
         for stream in &class.streams {
@@ -660,7 +688,12 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
         out
     }
 
-    fn generate_method(method: &Method, class_name: &str, class_prefix: &str, module: &Module) -> String {
+    fn generate_method(
+        method: &Method,
+        class_name: &str,
+        class_prefix: &str,
+        module: &Module,
+    ) -> String {
         let ffi_name = format!("{}_{}", class_prefix, method.name);
 
         let mut params: Vec<(String, String)> =
@@ -698,7 +731,7 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
             .collect()
     }
 
-    fn param_to_c(name: &str, ty: &Type, module: &Module) -> Vec<(String, String)> {
+    fn param_to_c(name: &str, ty: &Type, _module: &Module) -> Vec<(String, String)> {
         match ty {
             Type::String => vec![
                 (format!("{}_ptr", name), "const uint8_t*".to_string()),
@@ -712,7 +745,10 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
                     ]
                 } else {
                     vec![
-                        (format!("{}_ptr", name), format!("const {}*", Self::type_to_c(inner))),
+                        (
+                            format!("{}_ptr", name),
+                            format!("const {}*", Self::type_to_c(inner)),
+                        ),
                         (format!("{}_len", name), "uintptr_t".to_string()),
                     ]
                 }
@@ -725,26 +761,38 @@ static inline uint64_t {prefix}_atomic_u64_load(uint64_t* slot) {{
                     ]
                 } else {
                     vec![
-                        (format!("{}_ptr", name), format!("{}*", Self::type_to_c(inner))),
+                        (
+                            format!("{}_ptr", name),
+                            format!("{}*", Self::type_to_c(inner)),
+                        ),
                         (format!("{}_len", name), "uintptr_t".to_string()),
                     ]
                 }
             }
             Type::Vec(inner) => {
-                if matches!(inner.as_ref(), Type::Record(_) | Type::Vec(_) | Type::Enum(_)) {
+                if matches!(
+                    inner.as_ref(),
+                    Type::Record(_) | Type::Vec(_) | Type::Enum(_)
+                ) {
                     vec![
                         (format!("{}_ptr", name), "const uint8_t*".to_string()),
                         (format!("{}_len", name), "uintptr_t".to_string()),
                     ]
                 } else {
                     vec![
-                        (format!("{}_ptr", name), format!("const {}*", Self::type_to_c(inner))),
+                        (
+                            format!("{}_ptr", name),
+                            format!("const {}*", Self::type_to_c(inner)),
+                        ),
                         (format!("{}_len", name), "uintptr_t".to_string()),
                     ]
                 }
             }
             Type::Option(inner) => {
-                if matches!(inner.as_ref(), Type::Record(_) | Type::Enum(_) | Type::Vec(_)) {
+                if matches!(
+                    inner.as_ref(),
+                    Type::Record(_) | Type::Enum(_) | Type::Vec(_)
+                ) {
                     vec![
                         (format!("{}_ptr", name), "const uint8_t*".to_string()),
                         (format!("{}_len", name), "uintptr_t".to_string()),
