@@ -606,12 +606,26 @@ pub struct ParamView {
     pub conversion: String,
 }
 
+pub struct SignatureParamView {
+    pub name: String,
+    pub kotlin_type: String,
+}
+
+pub struct WireWriterView {
+    pub binding_name: String,
+    pub size_expr: String,
+    pub encode_expr: String,
+}
+
 #[derive(Template)]
 #[template(path = "kotlin/function_wire.txt", escape = "none")]
 pub struct WireFunctionTemplate {
     pub func_name: String,
     pub ffi_name: String,
-    pub params: Vec<ParamView>,
+    pub signature_params: Vec<SignatureParamView>,
+    pub native_args: Vec<String>,
+    pub wire_writers: Vec<WireWriterView>,
+    pub wire_writer_closes: Vec<String>,
     pub return_type: Option<String>,
     pub return_abi: ReturnAbi,
     pub decode_expr: String,
@@ -624,20 +638,32 @@ impl WireFunctionTemplate {
     pub fn from_function(function: &Function, module: &Module) -> Self {
         let plan =
             WireFunctionPlan::for_function(&function.name, &function.inputs, &function.returns, module);
-        let params = plan
-            .params
+        let signature_params = plan
+            .signature_params
             .into_iter()
-            .map(|spec| ParamView {
-                name: spec.name,
-                kotlin_type: spec.kotlin_type,
-                conversion: spec.conversion,
+            .map(|param| SignatureParamView {
+                name: param.name,
+                kotlin_type: param.kotlin_type,
+            })
+            .collect();
+
+        let wire_writers = plan
+            .wire_writers
+            .into_iter()
+            .map(|binding| WireWriterView {
+                binding_name: binding.binding_name,
+                size_expr: binding.size_expr,
+                encode_expr: binding.encode_expr,
             })
             .collect();
 
         Self {
             func_name: plan.func_name,
             ffi_name: plan.ffi_name,
-            params,
+            signature_params,
+            native_args: plan.native_args,
+            wire_writers,
+            wire_writer_closes: plan.wire_writer_closes,
             return_type: plan.return_type,
             return_abi: plan.return_abi,
             decode_expr: plan.decode_expr,
@@ -657,7 +683,10 @@ pub struct AsyncFunctionTemplate {
     pub ffi_complete: String,
     pub ffi_free: String,
     pub ffi_cancel: String,
-    pub params: Vec<ParamView>,
+    pub signature_params: Vec<SignatureParamView>,
+    pub native_args: Vec<String>,
+    pub wire_writers: Vec<WireWriterView>,
+    pub wire_writer_closes: Vec<String>,
     pub return_type: Option<String>,
     pub return_abi: ReturnAbi,
     pub decode_expr: String,
@@ -669,13 +698,22 @@ pub struct AsyncFunctionTemplate {
 impl AsyncFunctionTemplate {
     pub fn from_function(function: &Function, module: &Module) -> Self {
         let plan = AsyncCallPlan::for_function(&function.name, &function.inputs, &function.returns, module);
-        let params = plan
-            .params
+        let signature_params = plan
+            .signature_params
             .into_iter()
-            .map(|spec| ParamView {
-                name: spec.name,
-                kotlin_type: spec.kotlin_type,
-                conversion: spec.conversion,
+            .map(|param| SignatureParamView {
+                name: param.name,
+                kotlin_type: param.kotlin_type,
+            })
+            .collect();
+
+        let wire_writers = plan
+            .wire_writers
+            .into_iter()
+            .map(|binding| WireWriterView {
+                binding_name: binding.binding_name,
+                size_expr: binding.size_expr,
+                encode_expr: binding.encode_expr,
             })
             .collect();
 
@@ -686,7 +724,10 @@ impl AsyncFunctionTemplate {
             ffi_complete: plan.ffi_complete,
             ffi_free: plan.ffi_free,
             ffi_cancel: plan.ffi_cancel,
-            params,
+            signature_params,
+            native_args: plan.native_args,
+            wire_writers,
+            wire_writer_closes: plan.wire_writer_closes,
             return_type: plan.return_type,
             return_abi: plan.return_abi,
             decode_expr: plan.decode_expr,
@@ -818,7 +859,10 @@ impl ClassTemplate {
 pub struct WireMethodTemplate {
     pub method_name: String,
     pub ffi_name: String,
-    pub params: Vec<ParamView>,
+    pub signature_params: Vec<SignatureParamView>,
+    pub native_args: Vec<String>,
+    pub wire_writers: Vec<WireWriterView>,
+    pub wire_writer_closes: Vec<String>,
     pub return_type: Option<String>,
     pub return_abi: ReturnAbi,
     pub decode_expr: String,
@@ -839,15 +883,25 @@ impl WireMethodTemplate {
         Self {
             method_name: NamingConvention::method_name(&method.name),
             ffi_name: naming::method_ffi_name(&class.name, &method.name),
-            params: plan
-                .params
+            signature_params: plan
+                .signature_params
                 .into_iter()
-                .map(|spec| ParamView {
-                    name: spec.name,
-                    kotlin_type: spec.kotlin_type,
-                    conversion: spec.conversion,
+                .map(|param| SignatureParamView {
+                    name: param.name,
+                    kotlin_type: param.kotlin_type,
                 })
                 .collect(),
+            native_args: plan.native_args,
+            wire_writers: plan
+                .wire_writers
+                .into_iter()
+                .map(|binding| WireWriterView {
+                    binding_name: binding.binding_name,
+                    size_expr: binding.size_expr,
+                    encode_expr: binding.encode_expr,
+                })
+                .collect(),
+            wire_writer_closes: plan.wire_writer_closes,
             return_type: plan.return_type,
             return_abi: plan.return_abi,
             decode_expr: plan.decode_expr,
@@ -867,7 +921,10 @@ pub struct AsyncMethodTemplate {
     pub ffi_complete: String,
     pub ffi_cancel: String,
     pub ffi_free: String,
-    pub params: Vec<ParamView>,
+    pub signature_params: Vec<SignatureParamView>,
+    pub native_args: Vec<String>,
+    pub wire_writers: Vec<WireWriterView>,
+    pub wire_writer_closes: Vec<String>,
     pub return_type: Option<String>,
     pub return_abi: ReturnAbi,
     pub decode_expr: String,
@@ -886,15 +943,25 @@ impl AsyncMethodTemplate {
             ffi_complete: plan.ffi_complete,
             ffi_cancel: plan.ffi_cancel,
             ffi_free: plan.ffi_free,
-            params: plan
-                .params
+            signature_params: plan
+                .signature_params
                 .into_iter()
-                .map(|spec| ParamView {
-                    name: spec.name,
-                    kotlin_type: spec.kotlin_type,
-                    conversion: spec.conversion,
+                .map(|param| SignatureParamView {
+                    name: param.name,
+                    kotlin_type: param.kotlin_type,
                 })
                 .collect(),
+            native_args: plan.native_args,
+            wire_writers: plan
+                .wire_writers
+                .into_iter()
+                .map(|binding| WireWriterView {
+                    binding_name: binding.binding_name,
+                    size_expr: binding.size_expr,
+                    encode_expr: binding.encode_expr,
+                })
+                .collect(),
+            wire_writer_closes: plan.wire_writer_closes,
             return_type: plan.return_type,
             return_abi: plan.return_abi,
             decode_expr: plan.decode_expr,

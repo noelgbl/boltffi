@@ -1028,10 +1028,10 @@ impl JniParamInfo {
 
     fn compute_jni_type(ty: &Type, enum_info: &DataEnumInfo, module: &Module) -> String {
         if enum_info.name.is_some() {
-            return "jbyteArray".to_string();
+            return "jobject".to_string();
         }
         if Self::needs_wire_encoding(ty, module) {
-            return "jbyteArray".to_string();
+            return "jobject".to_string();
         }
         TypeMapper::c_jni_type(ty)
     }
@@ -1183,7 +1183,7 @@ mod tests {
         assert!(param.data_enum_name.is_some());
         assert_eq!(param.data_enum_name.as_deref(), Some("Result"));
         assert!(param.data_enum_struct_size > 0);
-        assert_eq!(param.jni_type, "jbyteArray");
+        assert_eq!(param.jni_type, "jobject");
     }
 
     #[test]
@@ -1200,7 +1200,7 @@ mod tests {
 
         assert!(param.data_enum_name.is_none());
         assert_eq!(param.data_enum_struct_size, 0);
-        assert_eq!(param.jni_type, "jbyteArray");
+        assert_eq!(param.jni_type, "jobject");
         assert!(param.is_wire_param);
     }
 

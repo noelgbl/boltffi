@@ -15,8 +15,9 @@ JNIEXPORT {{ return_abi.jni_return_type() }} JNICALL {{ jni_name }}(JNIEnv *env,
     {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->GetPrimitiveArrayCritical(env, {{ param.name }}, NULL);
 {%- endif %}
 {%- if param.is_wire_param() || param.is_data_enum() %}
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    uint8_t* _{{ param.name }}_ptr = (uint8_t*)(*env)->GetByteArrayElements(env, {{ param.name }}, NULL);
+    jlong _{{ param.name }}_size = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
+    uint8_t* _{{ param.name }}_ptr = (uint8_t*)(*env)->GetDirectBufferAddress(env, {{ param.name }});
+    uintptr_t _{{ param.name }}_len = (_{{ param.name }}_ptr && _{{ param.name }}_size > 0) ? (uintptr_t)_{{ param.name }}_size : 0;
 {%- endif %}
 {%- if param.is_closure() %}
     jobject _{{ param.name }}_ref = (*env)->NewGlobalRef(env, (jobject){{ param.name }});
@@ -33,9 +34,6 @@ JNIEXPORT {{ return_abi.jni_return_type() }} JNICALL {{ jni_name }}(JNIEnv *env,
 {%- if param.is_primitive_array() %}
     (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
 {%- endif %}
-{%- if param.is_wire_param() || param.is_data_enum() %}
-    (*env)->ReleaseByteArrayElements(env, {{ param.name }}, (jbyte*)_{{ param.name }}_ptr, JNI_ABORT);
-{%- endif %}
 {%- if param.is_string %}
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
 {%- endif %}
@@ -50,4 +48,3 @@ JNIEXPORT {{ return_abi.jni_return_type() }} JNICALL {{ jni_name }}(JNIEnv *env,
     return (*env)->NewDirectByteBuffer(env, (void*)_buf.ptr, (jlong)_buf.len);
 {%- endif %}
 }
-

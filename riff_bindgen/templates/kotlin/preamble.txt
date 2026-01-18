@@ -23,7 +23,7 @@ class RiffException(val errorBuffer: ByteBuffer) : Exception("Structured error")
 }
 
 private inline fun <T> useNativeBuffer(buffer: ByteBuffer, block: (ByteBuffer) -> T): T {
-    buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    buffer.order(ByteOrder.LITTLE_ENDIAN)
     return try {
         block(buffer)
     } finally {
@@ -57,7 +57,6 @@ internal fun riffFutureContinuationCallback(handle: Long, pollResult: Byte) {
     try {
         riffContinuationMap.remove(handle).resume(pollResult)
     } catch (e: Exception) {
-        // Handle already consumed or invalid - ignore
     }
 }
 
@@ -83,20 +82,15 @@ internal suspend inline fun <T> riffCallAsync(
     }
 }
 
-class WireBuffer(private val data: ByteArray) {
-    private val buffer: ByteBuffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-
+class WireBuffer private constructor(private val buffer: ByteBuffer) {
     companion object {
-        fun fromByteBuffer(buf: ByteBuffer): WireBuffer {
-            val arr = ByteArray(buf.remaining())
-            buf.get(arr)
-            return WireBuffer(arr)
-        }
+        fun fromByteBuffer(buf: ByteBuffer): WireBuffer =
+            WireBuffer(buf.slice().order(ByteOrder.LITTLE_ENDIAN))
     }
 
-    fun readBool(offset: Int): Boolean = data[offset] != 0.toByte()
-    fun readI8(offset: Int): Byte = data[offset]
-    fun readU8(offset: Int): UByte = data[offset].toUByte()
+    fun readBool(offset: Int): Boolean = buffer.get(offset) != 0.toByte()
+    fun readI8(offset: Int): Byte = buffer.get(offset)
+    fun readU8(offset: Int): UByte = buffer.get(offset).toUByte()
     fun readI16(offset: Int): Short = buffer.getShort(offset)
     fun readU16(offset: Int): UShort = buffer.getShort(offset).toUShort()
     fun readI32(offset: Int): Int = buffer.getInt(offset)
@@ -108,13 +102,19 @@ class WireBuffer(private val data: ByteArray) {
 
     fun readString(offset: Int): Pair<String, Int> {
         val len = readU32(offset).toInt()
-        val str = String(data, offset + 4, len, Charsets.UTF_8)
-        return str to (4 + len)
+        val bytes = ScratchBytes.acquire(len)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(offset + 4)
+        view.get(bytes, 0, len)
+        return String(bytes, 0, len, Charsets.UTF_8) to (4 + len)
     }
 
     fun readBytes(offset: Int): Pair<ByteArray, Int> {
         val len = readU32(offset).toInt()
-        val bytes = data.copyOfRange(offset + 4, offset + 4 + len)
+        val bytes = ByteArray(len)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(offset + 4)
+        view.get(bytes)
         return bytes to (4 + len)
     }
 
@@ -122,32 +122,57 @@ class WireBuffer(private val data: ByteArray) {
 
     fun readShortArray(offset: Int): Pair<ShortArray, Int> {
         val count = readU32(offset).toInt()
-        val arr = ShortArray(count) { i -> readI16(offset + 4 + i * 2) }
-        return arr to (4 + count * 2)
+        val bytes = (count.toLong() * 2L).toInt()
+        val arr = ShortArray(count)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(offset + 4)
+        view.limit(offset + 4 + bytes)
+        view.slice().order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(arr)
+        return arr to (4 + bytes)
     }
 
     fun readIntArray(offset: Int): Pair<IntArray, Int> {
         val count = readU32(offset).toInt()
-        val arr = IntArray(count) { i -> readI32(offset + 4 + i * 4) }
-        return arr to (4 + count * 4)
+        val bytes = (count.toLong() * 4L).toInt()
+        val arr = IntArray(count)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(offset + 4)
+        view.limit(offset + 4 + bytes)
+        view.slice().order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().get(arr)
+        return arr to (4 + bytes)
     }
 
     fun readLongArray(offset: Int): Pair<LongArray, Int> {
         val count = readU32(offset).toInt()
-        val arr = LongArray(count) { i -> readI64(offset + 4 + i * 8) }
-        return arr to (4 + count * 8)
+        val bytes = (count.toLong() * 8L).toInt()
+        val arr = LongArray(count)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(offset + 4)
+        view.limit(offset + 4 + bytes)
+        view.slice().order(ByteOrder.LITTLE_ENDIAN).asLongBuffer().get(arr)
+        return arr to (4 + bytes)
     }
 
     fun readFloatArray(offset: Int): Pair<FloatArray, Int> {
         val count = readU32(offset).toInt()
-        val arr = FloatArray(count) { i -> readF32(offset + 4 + i * 4) }
-        return arr to (4 + count * 4)
+        val bytes = (count.toLong() * 4L).toInt()
+        val arr = FloatArray(count)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(offset + 4)
+        view.limit(offset + 4 + bytes)
+        view.slice().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(arr)
+        return arr to (4 + bytes)
     }
 
     fun readDoubleArray(offset: Int): Pair<DoubleArray, Int> {
         val count = readU32(offset).toInt()
-        val arr = DoubleArray(count) { i -> readF64(offset + 4 + i * 8) }
-        return arr to (4 + count * 8)
+        val bytes = (count.toLong() * 8L).toInt()
+        val arr = DoubleArray(count)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(offset + 4)
+        view.limit(offset + 4 + bytes)
+        view.slice().order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer().get(arr)
+        return arr to (4 + bytes)
     }
 
     fun readBooleanArray(offset: Int): Pair<BooleanArray, Int> {
@@ -194,51 +219,78 @@ class WireBuffer(private val data: ByteArray) {
 
 }
 
-class WireWriter(initialCapacity: Int = 256) {
-    private var data = ByteArray(initialCapacity)
-    private var pos = 0
+private object Utf8Codec {
+    fun maxBytes(value: String): Int = value.length * 3
+}
 
-    private fun ensureCapacity(needed: Int) {
-        if (pos + needed > data.size) {
-            data = data.copyOf(maxOf(data.size * 2, pos + needed))
+private object ScratchBytes {
+    private val scratch: ThreadLocal<ByteArray> = ThreadLocal.withInitial { ByteArray(256) }
+
+    fun acquire(requiredCapacity: Int): ByteArray {
+        val bytes = scratch.get()
+        return if (bytes.size >= requiredCapacity) {
+            bytes
+        } else {
+            ByteArray(requiredCapacity).also { scratch.set(it) }
         }
     }
+}
 
-    fun writeBool(v: Boolean) { ensureCapacity(1); data[pos++] = if (v) 1 else 0 }
-    fun writePadding(count: Int) { ensureCapacity(count); repeat(count) { data[pos++] = 0 } }
-    fun writeI8(v: Byte) { ensureCapacity(1); data[pos++] = v }
-    fun writeU8(v: UByte) { ensureCapacity(1); data[pos++] = v.toByte() }
+class WireWriter(initialCapacity: Int = 256) {
+    private var buffer: ByteBuffer = ByteBuffer.allocateDirect(initialCapacity).order(ByteOrder.LITTLE_ENDIAN)
+    private var pos: Int = 0
 
-    fun writeI16(v: Short) {
-        ensureCapacity(2)
-        data[pos++] = v.toByte()
-        data[pos++] = (v.toInt() shr 8).toByte()
+    internal fun reset(requiredCapacity: Int) {
+        if (buffer.capacity() < requiredCapacity) {
+            buffer = ByteBuffer.allocateDirect(requiredCapacity).order(ByteOrder.LITTLE_ENDIAN)
+        }
+        pos = 0
     }
 
+    internal fun asDirectBuffer(): ByteBuffer {
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.limit(pos)
+        view.position(0)
+        return view.slice().order(ByteOrder.LITTLE_ENDIAN)
+    }
+
+    private fun ensureCapacity(needed: Int) {
+        val required = pos + needed
+        if (required <= buffer.capacity()) return
+        val nextCapacity = maxOf(buffer.capacity() * 2, required)
+        val next = ByteBuffer.allocateDirect(nextCapacity).order(ByteOrder.LITTLE_ENDIAN)
+        val source = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        source.limit(pos)
+        source.position(0)
+        next.put(source)
+        buffer = next
+    }
+
+    internal inline fun writeRawBytes(byteCount: Int, writer: (ByteBuffer, Int) -> Unit) {
+        ensureCapacity(byteCount)
+        val baseOffset = pos
+        writer(buffer, baseOffset)
+        pos = baseOffset + byteCount
+    }
+
+    fun writeBool(v: Boolean) { ensureCapacity(1); buffer.put(pos, if (v) 1 else 0); pos += 1 }
+    fun writePadding(count: Int) {
+        ensureCapacity(count)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(pos)
+        repeat(count) { view.put(0) }
+        pos += count
+    }
+    fun writeI8(v: Byte) { ensureCapacity(1); buffer.put(pos, v); pos += 1 }
+    fun writeU8(v: UByte) { ensureCapacity(1); buffer.put(pos, v.toByte()); pos += 1 }
+
+    fun writeI16(v: Short) { ensureCapacity(2); buffer.putShort(pos, v); pos += 2 }
     fun writeU16(v: UShort) = writeI16(v.toShort())
 
-    fun writeI32(v: Int) {
-        ensureCapacity(4)
-        data[pos++] = v.toByte()
-        data[pos++] = (v shr 8).toByte()
-        data[pos++] = (v shr 16).toByte()
-        data[pos++] = (v shr 24).toByte()
-    }
-
+    fun writeI32(v: Int) { ensureCapacity(4); buffer.putInt(pos, v); pos += 4 }
     fun writeU32(v: UInt) = writeI32(v.toInt())
 
-    fun writeI64(v: Long) {
-        ensureCapacity(8)
-        data[pos++] = v.toByte()
-        data[pos++] = (v shr 8).toByte()
-        data[pos++] = (v shr 16).toByte()
-        data[pos++] = (v shr 24).toByte()
-        data[pos++] = (v shr 32).toByte()
-        data[pos++] = (v shr 40).toByte()
-        data[pos++] = (v shr 48).toByte()
-        data[pos++] = (v shr 56).toByte()
-    }
-
+    fun writeI64(v: Long) { ensureCapacity(8); buffer.putLong(pos, v); pos += 8 }
     fun writeU64(v: ULong) = writeI64(v.toLong())
 
     fun writeF32(v: Float) = writeI32(java.lang.Float.floatToRawIntBits(v))
@@ -248,46 +300,82 @@ class WireWriter(initialCapacity: Int = 256) {
         val bytes = v.toByteArray(Charsets.UTF_8)
         writeU32(bytes.size.toUInt())
         ensureCapacity(bytes.size)
-        System.arraycopy(bytes, 0, data, pos, bytes.size)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(pos)
+        view.put(bytes)
         pos += bytes.size
     }
 
     fun writeBytes(v: ByteArray) {
         writeU32(v.size.toUInt())
         ensureCapacity(v.size)
-        System.arraycopy(v, 0, data, pos, v.size)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(pos)
+        view.put(v)
         pos += v.size
     }
 
     fun writePrimitiveList(v: IntArray) {
         writeU32(v.size.toUInt())
-        v.forEach { writeI32(it) }
+        val bytes = v.size * 4
+        writeRawBytes(bytes) { buf, baseOffset ->
+            val view = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            view.position(baseOffset)
+            view.limit(baseOffset + bytes)
+            view.slice().order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().put(v)
+        }
     }
 
     fun writePrimitiveList(v: LongArray) {
         writeU32(v.size.toUInt())
-        v.forEach { writeI64(it) }
+        val bytes = v.size * 8
+        writeRawBytes(bytes) { buf, baseOffset ->
+            val view = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            view.position(baseOffset)
+            view.limit(baseOffset + bytes)
+            view.slice().order(ByteOrder.LITTLE_ENDIAN).asLongBuffer().put(v)
+        }
     }
 
     fun writePrimitiveList(v: FloatArray) {
         writeU32(v.size.toUInt())
-        v.forEach { writeF32(it) }
+        val bytes = v.size * 4
+        writeRawBytes(bytes) { buf, baseOffset ->
+            val view = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            view.position(baseOffset)
+            view.limit(baseOffset + bytes)
+            view.slice().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().put(v)
+        }
     }
 
     fun writePrimitiveList(v: DoubleArray) {
         writeU32(v.size.toUInt())
-        v.forEach { writeF64(it) }
+        val bytes = v.size * 8
+        writeRawBytes(bytes) { buf, baseOffset ->
+            val view = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            view.position(baseOffset)
+            view.limit(baseOffset + bytes)
+            view.slice().order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer().put(v)
+        }
     }
 
     fun writePrimitiveList(v: ShortArray) {
         writeU32(v.size.toUInt())
-        v.forEach { writeI16(it) }
+        val bytes = v.size * 2
+        writeRawBytes(bytes) { buf, baseOffset ->
+            val view = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            view.position(baseOffset)
+            view.limit(baseOffset + bytes)
+            view.slice().order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().put(v)
+        }
     }
 
     fun writePrimitiveList(v: ByteArray) {
         writeU32(v.size.toUInt())
         ensureCapacity(v.size)
-        System.arraycopy(v, 0, data, pos, v.size)
+        val view = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        view.position(pos)
+        view.put(v)
         pos += v.size
     }
 
@@ -325,6 +413,47 @@ class WireWriter(initialCapacity: Int = 256) {
         writeU32(v.size.toUInt())
         v.forEach { item -> writeBlittable(item) }
     }
+}
 
-    fun toByteArray(): ByteArray = data.copyOf(pos)
+private const val MAX_CACHED_WIRE_WRITER_BYTES: Int = 1024 * 1024
+
+internal class WireWriterPoolState(private val cacheSize: Int = 4) {
+    private val cachedWriters: Array<WireWriter?> = arrayOfNulls(cacheSize)
+    private var depth: Int = 0
+
+    fun acquire(requiredCapacity: Int): BorrowedWireWriter {
+        val slot = depth
+        depth = slot + 1
+        val shouldCache = requiredCapacity <= MAX_CACHED_WIRE_WRITER_BYTES && slot < cacheSize
+        val writer = if (shouldCache) {
+            cachedWriters[slot] ?: WireWriter(requiredCapacity).also { cachedWriters[slot] = it }
+        } else {
+            WireWriter(requiredCapacity)
+        }
+
+        writer.reset(requiredCapacity)
+        return BorrowedWireWriter(this, writer)
+    }
+
+    fun release() {
+        depth -= 1
+    }
+}
+
+internal class BorrowedWireWriter(
+    private val state: WireWriterPoolState,
+    internal val writer: WireWriter
+) : AutoCloseable {
+    internal val buffer: ByteBuffer
+        get() = writer.asDirectBuffer()
+
+    override fun close() {
+        state.release()
+    }
+}
+
+internal object WireWriterPool {
+    private val state: ThreadLocal<WireWriterPoolState> = ThreadLocal.withInitial { WireWriterPoolState() }
+
+    fun acquire(requiredCapacity: Int): BorrowedWireWriter = state.get().acquire(requiredCapacity)
 }

@@ -706,11 +706,11 @@ mod tests {
         let output = Kotlin::render_module(&module);
 
         assert!(output.contains("fun countOptional(maybeName: String?): Int"));
-        assert!(output.contains("WireWriter().also"));
+        assert!(output.contains("WireWriter("));
         assert!(output.contains("writeU8(1u)"));
         assert!(output.contains("writeU8(0u)"));
         assert!(output.contains("writeString"));
-        assert!(output.contains("external fun riff_count_optional(maybeName: ByteArray): Int"));
+        assert!(output.contains("external fun riff_count_optional(maybeName: ByteBuffer): Int"));
     }
 
     #[test]

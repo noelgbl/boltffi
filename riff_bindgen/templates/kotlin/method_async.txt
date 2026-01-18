@@ -1,8 +1,29 @@
 {%- if throws %}
 @Throws({{ err_type }}::class)
 {%- endif %}
-suspend fun {{ method_name }}({% for param in params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% match return_type %}{% when Some with (ret) %}: {{ ret }}{% when None %}{% endmatch %} = riffCallAsync(
-    createFuture = { Native.{{ ffi_name }}(handle{% if params.len() > 0 %}, {% endif %}{% for param in params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}) },
+suspend fun {{ method_name }}({% for param in signature_params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% match return_type %}{% when Some with (ret) %}: {{ ret }}{% when None %}{% endmatch %} = riffCallAsync(
+{%- if wire_writers.is_empty() %}
+    createFuture = { Native.{{ ffi_name }}(handle{% if native_args.len() > 0 %}, {% endif %}{% for arg in native_args %}{{ arg }}{% if !loop.last %}, {% endif %}{% endfor %}) },
+{%- else %}
+    createFuture = {
+{%- for binding in wire_writers %}
+        val {{ binding.binding_name }} = WireWriterPool.acquire({{ binding.size_expr }})
+{%- endfor %}
+        try {
+{%- for binding in wire_writers %}
+            run {
+                val wire = {{ binding.binding_name }}.writer
+                {{ binding.encode_expr }}
+            }
+{%- endfor %}
+            Native.{{ ffi_name }}(handle{% if native_args.len() > 0 %}, {% endif %}{% for arg in native_args %}{{ arg }}{% if !loop.last %}, {% endif %}{% endfor %})
+        } finally {
+{%- for binding_name in wire_writer_closes %}
+            {{ binding_name }}.close()
+{%- endfor %}
+        }
+    },
+{%- endif %}
     poll = { future, contHandle -> Native.{{ ffi_poll }}(handle, future, contHandle) },
     complete = { future ->
 {%- if return_abi.is_unit() %}

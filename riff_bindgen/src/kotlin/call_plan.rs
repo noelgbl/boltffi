@@ -17,10 +17,26 @@ pub struct ParamSpec {
 }
 
 #[derive(Debug, Clone)]
+pub struct SignatureParamSpec {
+    pub name: String,
+    pub kotlin_type: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct WireWriterBinding {
+    pub binding_name: String,
+    pub size_expr: String,
+    pub encode_expr: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct WireFunctionPlan {
     pub func_name: String,
     pub ffi_name: String,
-    pub params: Vec<ParamSpec>,
+    pub signature_params: Vec<SignatureParamSpec>,
+    pub wire_writers: Vec<WireWriterBinding>,
+    pub wire_writer_closes: Vec<String>,
+    pub native_args: Vec<String>,
     pub return_type: Option<String>,
     pub return_abi: ReturnAbi,
     pub decode_expr: String,
@@ -48,31 +64,57 @@ impl WireFunctionPlan {
         let ffi_name = naming::function_ffi_name(function_name);
         let return_abi = ReturnAbi::from_return_type(returns, module);
 
-        let params = inputs
+        let signature_params = inputs
+            .iter()
+            .map(|param| {
+                let param_name = NamingConvention::param_name(&param.name);
+                let kotlin_type = TypeMapper::map_type(&param.param_type);
+                SignatureParamSpec {
+                    name: param_name,
+                    kotlin_type,
+                }
+            })
+            .collect();
+
+        let (wire_writers, native_args) = inputs
             .iter()
             .zip(contract.params.iter())
             .map(|(param, param_contract)| {
                 let param_name = NamingConvention::param_name(&param.name);
-                let kotlin_type = TypeMapper::map_type(&param.param_type);
-                let conversion = match &param_contract.transport {
-                    ParamTransport::PassThrough(_) => {
-                        ParamConversion::to_ffi(&param_name, &param.param_type, module)
-                    }
+                match &param_contract.transport {
+                    ParamTransport::PassThrough(_) => (
+                        None,
+                        ParamConversion::to_ffi(&param_name, &param.param_type, module),
+                    ),
                     ParamTransport::WireEncoded(_) => {
                         let encoder = wire::encode_type(&param.param_type, &param_name, module);
-                        format!(
-                            "WireWriter().also {{ wire -> {} }}.toByteArray()",
-                            encoder.encode_expr
+                        let binding_name = format!("wire_writer_{}", param_name);
+                        (
+                            Some(WireWriterBinding {
+                                binding_name: binding_name.clone(),
+                                size_expr: encoder.size_expr,
+                                encode_expr: encoder.encode_expr,
+                            }),
+                            format!("{}.buffer", binding_name),
                         )
                     }
-                };
-
-                ParamSpec {
-                    name: param_name,
-                    kotlin_type,
-                    conversion,
                 }
             })
+            .fold(
+                (Vec::new(), Vec::new()),
+                |(mut wire_writers, mut native_args), (maybe_wire_writer, native_arg)| {
+                    if let Some(wire_writer) = maybe_wire_writer {
+                        wire_writers.push(wire_writer);
+                    }
+                    native_args.push(native_arg);
+                    (wire_writers, native_args)
+                },
+            );
+
+        let wire_writer_closes = wire_writers
+            .iter()
+            .map(|binding| binding.binding_name.clone())
+            .rev()
             .collect();
 
         let return_type = return_abi.kotlin_type().map(String::from);
@@ -88,7 +130,10 @@ impl WireFunctionPlan {
         Self {
             func_name: NamingConvention::method_name(function_name),
             ffi_name,
-            params,
+            signature_params,
+            wire_writers,
+            wire_writer_closes,
+            native_args,
             return_type,
             return_abi,
             decode_expr,
@@ -214,7 +259,7 @@ impl WireFunctionPlan {
         if pass_through {
             TypeMapper::jni_type(param_type)
         } else {
-            "ByteArray".into()
+            "ByteBuffer".into()
         }
     }
 }
@@ -227,7 +272,10 @@ pub struct AsyncCallPlan {
     pub ffi_complete: String,
     pub ffi_cancel: String,
     pub ffi_free: String,
-    pub params: Vec<ParamSpec>,
+    pub signature_params: Vec<SignatureParamSpec>,
+    pub wire_writers: Vec<WireWriterBinding>,
+    pub wire_writer_closes: Vec<String>,
+    pub native_args: Vec<String>,
     pub return_type: Option<String>,
     pub return_abi: ReturnAbi,
     pub decode_expr: String,
@@ -283,31 +331,57 @@ impl AsyncCallPlan {
             .then(|| WireFunctionPlan::compute_decode_expr(returns, module, is_blittable_return))
             .unwrap_or_default();
 
-        let params = inputs
+        let signature_params = inputs
+            .iter()
+            .map(|param| {
+                let param_name = NamingConvention::param_name(&param.name);
+                let kotlin_type = TypeMapper::map_type(&param.param_type);
+                SignatureParamSpec {
+                    name: param_name,
+                    kotlin_type,
+                }
+            })
+            .collect();
+
+        let (wire_writers, native_args) = inputs
             .iter()
             .zip(contract.params.iter())
             .map(|(param, param_contract)| {
                 let param_name = NamingConvention::param_name(&param.name);
-                let kotlin_type = TypeMapper::map_type(&param.param_type);
-                let conversion = match &param_contract.transport {
-                    ParamTransport::PassThrough(_) => {
-                        ParamConversion::to_ffi(&param_name, &param.param_type, module)
-                    }
+                match &param_contract.transport {
+                    ParamTransport::PassThrough(_) => (
+                        None,
+                        ParamConversion::to_ffi(&param_name, &param.param_type, module),
+                    ),
                     ParamTransport::WireEncoded(_) => {
                         let encoder = wire::encode_type(&param.param_type, &param_name, module);
-                        format!(
-                            "WireWriter().also {{ wire -> {} }}.toByteArray()",
-                            encoder.encode_expr
+                        let binding_name = format!("wire_writer_{}", param_name);
+                        (
+                            Some(WireWriterBinding {
+                                binding_name: binding_name.clone(),
+                                size_expr: encoder.size_expr,
+                                encode_expr: encoder.encode_expr,
+                            }),
+                            format!("{}.buffer", binding_name),
                         )
                     }
-                };
-
-                ParamSpec {
-                    name: param_name,
-                    kotlin_type,
-                    conversion,
                 }
             })
+            .fold(
+                (Vec::new(), Vec::new()),
+                |(mut wire_writers, mut native_args), (maybe_wire_writer, native_arg)| {
+                    if let Some(wire_writer) = maybe_wire_writer {
+                        wire_writers.push(wire_writer);
+                    }
+                    native_args.push(native_arg);
+                    (wire_writers, native_args)
+                },
+            );
+
+        let wire_writer_closes = wire_writers
+            .iter()
+            .map(|binding| binding.binding_name.clone())
+            .rev()
             .collect();
 
         Self {
@@ -317,7 +391,10 @@ impl AsyncCallPlan {
             ffi_complete: naming::function_ffi_complete(function_name),
             ffi_cancel: naming::function_ffi_cancel(function_name),
             ffi_free: naming::function_ffi_free(function_name),
-            params,
+            signature_params,
+            wire_writers,
+            wire_writer_closes,
+            native_args,
             return_type: return_abi.kotlin_type().map(String::from),
             return_abi,
             decode_expr,
@@ -339,32 +416,59 @@ impl AsyncCallPlan {
             })
             .unwrap_or_default();
 
-        let params = method
+        let signature_params = method
+            .inputs
+            .iter()
+            .map(|param| {
+                let param_name = NamingConvention::param_name(&param.name);
+                let kotlin_type = TypeMapper::map_type(&param.param_type);
+                SignatureParamSpec {
+                    name: param_name,
+                    kotlin_type,
+                }
+            })
+            .collect();
+
+        let (wire_writers, native_args) = method
             .inputs
             .iter()
             .zip(contract.params.iter())
             .map(|(param, param_contract)| {
                 let param_name = NamingConvention::param_name(&param.name);
-                let kotlin_type = TypeMapper::map_type(&param.param_type);
-                let conversion = match &param_contract.transport {
-                    ParamTransport::PassThrough(_) => {
-                        ParamConversion::to_ffi(&param_name, &param.param_type, module)
-                    }
+                match &param_contract.transport {
+                    ParamTransport::PassThrough(_) => (
+                        None,
+                        ParamConversion::to_ffi(&param_name, &param.param_type, module),
+                    ),
                     ParamTransport::WireEncoded(_) => {
                         let encoder = wire::encode_type(&param.param_type, &param_name, module);
-                        format!(
-                            "WireWriter().also {{ wire -> {} }}.toByteArray()",
-                            encoder.encode_expr
+                        let binding_name = format!("wire_writer_{}", param_name);
+                        (
+                            Some(WireWriterBinding {
+                                binding_name: binding_name.clone(),
+                                size_expr: encoder.size_expr,
+                                encode_expr: encoder.encode_expr,
+                            }),
+                            format!("{}.buffer", binding_name),
                         )
                     }
-                };
-
-                ParamSpec {
-                    name: param_name,
-                    kotlin_type,
-                    conversion,
                 }
             })
+            .fold(
+                (Vec::new(), Vec::new()),
+                |(mut wire_writers, mut native_args), (maybe_wire_writer, native_arg)| {
+                    if let Some(wire_writer) = maybe_wire_writer {
+                        wire_writers.push(wire_writer);
+                    }
+                    native_args.push(native_arg);
+                    (wire_writers, native_args)
+                },
+            );
+
+        let wire_writer_closes = wire_writers
+            .iter()
+            .map(|binding| binding.binding_name.clone())
+            .rev()
             .collect();
 
         Self {
@@ -374,7 +478,10 @@ impl AsyncCallPlan {
             ffi_complete: naming::method_ffi_complete(&class.name, &method.name),
             ffi_cancel: naming::method_ffi_cancel(&class.name, &method.name),
             ffi_free: naming::method_ffi_free(&class.name, &method.name),
-            params,
+            signature_params,
+            wire_writers,
+            wire_writer_closes,
+            native_args,
             return_type: return_abi.kotlin_type().map(String::from),
             return_abi,
             decode_expr,

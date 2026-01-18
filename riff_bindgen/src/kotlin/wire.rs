@@ -221,7 +221,7 @@ fn encode_primitive(p: Primitive, name: &str) -> KotlinEncoder {
 
 fn encode_string(name: &str) -> KotlinEncoder {
     KotlinEncoder {
-        size_expr: format!("(4 + {}.toByteArray(Charsets.UTF_8).size)", name),
+        size_expr: format!("(4 + Utf8Codec.maxBytes({}))", name),
         encode_expr: format!("wire.writeString({})", name),
     }
 }
@@ -259,8 +259,17 @@ fn encode_enum(enum_name: &str, field_name: &str, module: &Module) -> KotlinEnco
 fn encode_vec(inner: &Type, name: &str, module: &Module) -> KotlinEncoder {
     let inner_encoder = encode_type(inner, "item", module);
 
+    let record_struct_size = inner
+        .record_name()
+        .and_then(|record_name| module.records.iter().find(|record| record.name == record_name))
+        .filter(|record| record.is_blittable())
+        .map(|record| record.struct_size().as_usize());
+
     let size_expr = match inner {
         Type::Primitive(p) => format!("(4 + {}.size * {})", name, p.size_bytes()),
+        Type::Record(_) if record_struct_size.is_some() => {
+            format!("(4 + {}.size * {})", name, record_struct_size.unwrap())
+        }
         _ => {
             format!(
                 "(4 + {}.sumOf {{ item -> {} }})",
@@ -271,6 +280,12 @@ fn encode_vec(inner: &Type, name: &str, module: &Module) -> KotlinEncoder {
 
     let encode_expr = match inner {
         Type::Primitive(_) => format!("wire.writePrimitiveList({})", name),
+        Type::Record(record_name) if record_struct_size.is_some() => format!(
+            "wire.writeU32({}.size.toUInt()); {}Writer.writeAllToWire(wire, {})",
+            name,
+            NamingConvention::class_name(record_name),
+            name
+        ),
         _ => {
             format!(
                 "wire.writeU32({}.size.toUInt()); {}.forEach {{ item -> {} }}",

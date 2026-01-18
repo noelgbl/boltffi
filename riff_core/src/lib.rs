@@ -1,3 +1,5 @@
+extern crate self as riff_core;
+
 #[cfg(feature = "fast-alloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

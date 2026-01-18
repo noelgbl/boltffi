@@ -12,5 +12,5 @@ private object {{ reader_name }} {
         )
 
     fun readAll(buf: ByteBuffer, baseOffset: Int, count: Int): List<{{ class_name }}> =
-        (0 until count).map { i -> read(buf, baseOffset + i * STRUCT_SIZE) }
+        List(count) { i -> read(buf, baseOffset + i * STRUCT_SIZE) }
 }

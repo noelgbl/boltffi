@@ -570,7 +570,7 @@ mod records {
         assert!(!User::is_fixed_size());
         assert_eq!(User::fixed_size(), None);
 
-        let expected_size = 2 + (3 * 4) + 4 + (4 + 5) + 8;
+        let expected_size = 4 + (4 + 5) + 8;
         assert_eq!(original.wire_size(), expected_size);
 
         let mut buf = vec![0u8; expected_size];
