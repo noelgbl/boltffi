@@ -218,6 +218,7 @@ struct ScannedClass {
 
 struct ScannedConstructor {
     name: String,
+    is_fallible: bool,
     params: Vec<(String, MType)>,
 }
 
@@ -415,7 +416,7 @@ impl SourceScanner {
             .next()
             .ok_or_else(|| format!("custom_ffi: `{}` is missing `type FfiRepr = ...;`", name))?;
 
-        let repr = rust_type_to_ffi_type(repr_syn_type, &self.type_registry, alias_resolver)
+        let repr = rust_type_to_ffi_type(repr_syn_type, &self.type_registry, alias_resolver, None)
             .ok_or_else(|| {
             format!(
                 "custom_ffi: `{}` has an unsupported FfiRepr type: {}",
@@ -546,8 +547,12 @@ impl SourceScanner {
                 .iter()
                 .filter_map(|f| {
                     let field_name = f.ident.as_ref()?.to_string();
-                    let field_type =
-                        rust_type_to_ffi_type(&f.ty, &self.type_registry, &self.alias_resolver)?;
+                    let field_type = rust_type_to_ffi_type(
+                        &f.ty,
+                        &self.type_registry,
+                        &self.alias_resolver,
+                        None,
+                    )?;
                     Some((field_name, field_type))
                 })
                 .collect(),
@@ -583,6 +588,7 @@ impl SourceScanner {
                                 &f.ty,
                                 &self.type_registry,
                                 &self.alias_resolver,
+                                None,
                             )?;
                             Some((field_name, field_type))
                         })
@@ -596,6 +602,7 @@ impl SourceScanner {
                                 &f.ty,
                                 &self.type_registry,
                                 &self.alias_resolver,
+                                None,
                             )?;
                             Some((format!("_{}", i), field_type))
                         })
@@ -646,6 +653,7 @@ impl SourceScanner {
                     &pat_type.ty,
                     &self.type_registry,
                     &self.alias_resolver,
+                    None,
                 )?;
                 Some((param_name, param_type))
             })
@@ -659,7 +667,7 @@ impl SourceScanner {
             syn::ReturnType::Default => None,
             syn::ReturnType::Type(_, ty) => {
                 let converted =
-                    rust_type_to_ffi_type(ty, &self.type_registry, &self.alias_resolver);
+                    rust_type_to_ffi_type(ty, &self.type_registry, &self.alias_resolver, None);
                 if converted.is_none() {
                     return;
                 }
@@ -709,6 +717,7 @@ impl SourceScanner {
                         &pat_type.ty,
                         &self.type_registry,
                         &self.alias_resolver,
+                        None,
                     )?;
                     Some((param_name, param_type))
                 } else {
@@ -720,7 +729,7 @@ impl SourceScanner {
         let output = match &method.sig.output {
             syn::ReturnType::Default => None,
             syn::ReturnType::Type(_, ty) => {
-                rust_type_to_ffi_type(ty, &self.type_registry, &self.alias_resolver)
+                rust_type_to_ffi_type(ty, &self.type_registry, &self.alias_resolver, None)
             }
         };
 
@@ -733,50 +742,52 @@ impl SourceScanner {
     }
 
     fn process_class(&mut self, item_impl: &ItemImpl) {
-        let name = match &*item_impl.self_ty {
-            Type::Path(type_path) => type_path
-                .path
-                .segments
-                .last()
-                .map(|s| s.ident.to_string())
-                .unwrap_or_default(),
-            _ => return,
+        let Some(class_name) = impl_self_type_ident(item_impl) else {
+            return;
         };
 
         let mut class = ScannedClass {
-            name: name.clone(),
+            name: class_name.clone(),
             methods: Vec::new(),
             streams: Vec::new(),
             constructors: Vec::new(),
         };
 
-        for item in &item_impl.items {
-            if let ImplItem::Fn(method) = item {
-                if self.is_constructor(method, &name) {
-                    if let Some(ctor) = self.process_constructor(method) {
-                        class.constructors.push(ctor);
-                    }
-                    continue;
-                }
-
-                if has_attribute(&method.attrs, "skip") {
-                    continue;
-                }
-
+        item_impl
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ImplItem::Fn(method) => Some(method),
+                _ => None,
+            })
+            .filter(|method| matches!(method.vis, syn::Visibility::Public(_)))
+            .filter(|method| !has_attribute(&method.attrs, "skip"))
+            .for_each(|method| {
                 if has_attribute(&method.attrs, "ffi_stream") {
                     if let Some(stream) = self.process_stream_method(method) {
                         class.streams.push(stream);
                     }
-                } else if let Some(m) = self.process_method(method) {
-                    class.methods.push(m);
+                    return;
                 }
-            }
-        }
+
+                if self.is_constructor(method, &class_name) {
+                    if let Some(ctor) = self.process_constructor(method, &class_name) {
+                        class.constructors.push(ctor);
+                    }
+                    return;
+                }
+
+                if method.sig.inputs.iter().any(|arg| matches!(arg, syn::FnArg::Receiver(_))) {
+                    if let Some(scanned_method) = self.process_method(method, &class_name) {
+                        class.methods.push(scanned_method);
+                    }
+                }
+            });
 
         self.classes.push(class);
     }
 
-    fn process_method(&self, method: &syn::ImplItemFn) -> Option<ScannedMethod> {
+    fn process_method(&self, method: &syn::ImplItemFn, self_type_name: &str) -> Option<ScannedMethod> {
         let name = method.sig.ident.to_string();
         let is_async = method.sig.asyncness.is_some();
 
@@ -819,6 +830,7 @@ impl SourceScanner {
                     &pat_type.ty,
                     &self.type_registry,
                     &self.alias_resolver,
+                    Some(self_type_name),
                 )?;
                 Some((param_name, param_type))
             })
@@ -831,7 +843,7 @@ impl SourceScanner {
         let output = match &method.sig.output {
             syn::ReturnType::Default => None,
             syn::ReturnType::Type(_, ty) => {
-                rust_type_to_ffi_type(ty, &self.type_registry, &self.alias_resolver)
+                rust_type_to_ffi_type(ty, &self.type_registry, &self.alias_resolver, Some(self_type_name))
             }
         };
 
@@ -870,38 +882,18 @@ impl SourceScanner {
         match &method.sig.output {
             syn::ReturnType::Default => false,
             syn::ReturnType::Type(_, ty) => {
-                if let syn::Type::Path(type_path) = ty.as_ref() {
-                    let last_segment = type_path.path.segments.last();
-                    let direct = last_segment
-                        .map(|s| s.ident == "Self" || s.ident == class_name)
-                        .unwrap_or(false);
-                    if direct {
-                        return true;
-                    }
-
-                    last_segment
-                        .filter(|segment| segment.ident == "Arc" || segment.ident == "Box")
-                        .and_then(|segment| match &segment.arguments {
-                            syn::PathArguments::AngleBracketed(args) => args.args.first(),
-                            _ => None,
-                        })
-                        .and_then(|arg| match arg {
-                            syn::GenericArgument::Type(syn::Type::Path(inner_path)) => {
-                                inner_path.path.segments.last()
-                            }
-                            _ => None,
-                        })
-                        .map(|seg| seg.ident == "Self" || seg.ident == class_name)
-                        .unwrap_or(false)
-                } else {
-                    false
-                }
+                return_type_is_self(ty.as_ref(), class_name)
+                    || return_type_is_result_self(ty.as_ref(), class_name)
             }
         }
     }
 
-    fn process_constructor(&self, method: &syn::ImplItemFn) -> Option<ScannedConstructor> {
+    fn process_constructor(&self, method: &syn::ImplItemFn, self_type_name: &str) -> Option<ScannedConstructor> {
         let name = method.sig.ident.to_string();
+        let is_fallible = match &method.sig.output {
+            syn::ReturnType::Default => false,
+            syn::ReturnType::Type(_, ty) => return_type_is_result_self(ty.as_ref(), self_type_name),
+        };
 
         let params: Vec<(String, MType)> = method
             .sig
@@ -917,6 +909,7 @@ impl SourceScanner {
                         &pat_type.ty,
                         &self.type_registry,
                         &self.alias_resolver,
+                        Some(self_type_name),
                     )?;
                     Some((param_name, param_type))
                 }
@@ -924,7 +917,11 @@ impl SourceScanner {
             })
             .collect::<Option<Vec<_>>>()?;
 
-        Some(ScannedConstructor { name, params })
+        Some(ScannedConstructor {
+            name,
+            is_fallible,
+            params,
+        })
     }
 
     pub fn into_module(self) -> Module {
@@ -981,7 +978,9 @@ impl SourceScanner {
             let mut c = Class::new(&class.name);
 
             for ctor in class.constructors {
-                let mut constructor = Constructor::new().with_name(&ctor.name);
+                let mut constructor = Constructor::new()
+                    .with_name(&ctor.name)
+                    .with_fallible(ctor.is_fallible);
                 for (name, ty) in ctor.params {
                     constructor = constructor.with_param(ConstructorParam::new(&name, ty));
                 }
@@ -1051,6 +1050,41 @@ fn has_attribute(attrs: &[Attribute], name: &str) -> bool {
                 .last()
                 .is_some_and(|segment| segment.ident == name)
     })
+}
+
+fn return_type_is_self(ty: &Type, class_name: &str) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+    type_path
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "Self" || segment.ident == class_name)
+}
+
+fn return_type_is_result_self(ty: &Type, class_name: &str) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+    let Some(result_segment) = type_path
+        .path
+        .segments
+        .last()
+        .filter(|segment| segment.ident == "Result")
+    else {
+        return false;
+    };
+    let syn::PathArguments::AngleBracketed(args) = &result_segment.arguments else {
+        return false;
+    };
+    let Some(syn::GenericArgument::Type(Type::Path(ok_ty))) = args.args.first() else {
+        return false;
+    };
+    ok_ty.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "Self" || segment.ident == class_name)
 }
 
 fn impl_self_type_ident(item_impl: &ItemImpl) -> Option<String> {
@@ -1186,11 +1220,16 @@ fn rust_type_to_ffi_type(
     ty: &Type,
     registry: &TypeRegistry,
     alias_resolver: &AliasResolver,
+    self_type_name: Option<&str>,
 ) -> Option<MType> {
     match ty {
         Type::Path(type_path) => {
             let last_segment = type_path.path.segments.last()?;
             let ident = last_segment.ident.to_string();
+
+            if ident == "Self" {
+                return self_type_name.map(|name| MType::Object(name.to_string()));
+            }
 
             if ident == "Box"
                 && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
@@ -1216,14 +1255,14 @@ fn rust_type_to_ffi_type(
                 && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
                 && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
             {
-                return rust_type_to_ffi_type(inner_ty, registry, alias_resolver);
+                return rust_type_to_ffi_type(inner_ty, registry, alias_resolver, self_type_name);
             }
 
             if ident == "Vec" {
                 if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
                     && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
                 {
-                    let inner = rust_type_to_ffi_type(inner_ty, registry, alias_resolver)?;
+                    let inner = rust_type_to_ffi_type(inner_ty, registry, alias_resolver, self_type_name)?;
                     return Some(MType::Vec(Box::new(inner)));
                 }
                 return None;
@@ -1233,7 +1272,7 @@ fn rust_type_to_ffi_type(
                 if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
                     && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
                 {
-                    let inner = rust_type_to_ffi_type(inner_ty, registry, alias_resolver)?;
+                    let inner = rust_type_to_ffi_type(inner_ty, registry, alias_resolver, self_type_name)?;
                     return Some(MType::Option(Box::new(inner)));
                 }
                 return None;
@@ -1243,12 +1282,12 @@ fn rust_type_to_ffi_type(
                 if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
                     let mut args_iter = args.args.iter();
                     if let Some(syn::GenericArgument::Type(ok_ty)) = args_iter.next() {
-                        let ok = rust_type_to_ffi_type(ok_ty, registry, alias_resolver)?;
+                        let ok = rust_type_to_ffi_type(ok_ty, registry, alias_resolver, self_type_name)?;
                         let err = args_iter
                             .next()
                             .and_then(|arg| {
                                 if let syn::GenericArgument::Type(err_ty) = arg {
-                                    rust_type_to_ffi_type(err_ty, registry, alias_resolver)
+                                    rust_type_to_ffi_type(err_ty, registry, alias_resolver, self_type_name)
                                 } else {
                                     None
                                 }
@@ -1281,17 +1320,17 @@ fn rust_type_to_ffi_type(
                 }
             }
             if let Type::Slice(slice) = &*type_ref.elem {
-                let inner = rust_type_to_ffi_type(&slice.elem, registry, alias_resolver)?;
+                let inner = rust_type_to_ffi_type(&slice.elem, registry, alias_resolver, self_type_name)?;
                 return if type_ref.mutability.is_some() {
                     Some(MType::MutSlice(Box::new(inner)))
                 } else {
                     Some(MType::Slice(Box::new(inner)))
                 };
             }
-            rust_type_to_ffi_type(&type_ref.elem, registry, alias_resolver)
+            rust_type_to_ffi_type(&type_ref.elem, registry, alias_resolver, self_type_name)
         }
         Type::Slice(slice) => {
-            let inner = rust_type_to_ffi_type(&slice.elem, registry, alias_resolver)?;
+            let inner = rust_type_to_ffi_type(&slice.elem, registry, alias_resolver, self_type_name)?;
             Some(MType::Slice(Box::new(inner)))
         }
         Type::ImplTrait(impl_trait) => {
@@ -1310,13 +1349,13 @@ fn rust_type_to_ffi_type(
                         let params: Vec<MType> = args
                             .inputs
                             .iter()
-                            .filter_map(|t| rust_type_to_ffi_type(t, registry, alias_resolver))
+                            .filter_map(|t| rust_type_to_ffi_type(t, registry, alias_resolver, self_type_name))
                             .collect();
 
                         let returns = match &args.output {
                             syn::ReturnType::Default => MType::Void,
                             syn::ReturnType::Type(_, ty) => {
-                                rust_type_to_ffi_type(ty, registry, alias_resolver)
+                                rust_type_to_ffi_type(ty, registry, alias_resolver, self_type_name)
                                     .unwrap_or(MType::Void)
                             }
                         };
