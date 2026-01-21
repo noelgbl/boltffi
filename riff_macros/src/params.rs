@@ -1,6 +1,7 @@
 use quote::quote;
 use syn::{FnArg, Pat};
 
+use crate::custom_types::{CustomTypeRegistry, contains_custom_types, from_wire_expr_owned, to_wire_expr_owned, wire_type_for};
 use crate::util::{
     ParamTransform, classify_param_transform, is_primitive_vec_inner, len_ident, ptr_ident,
 };
@@ -11,7 +12,10 @@ pub struct FfiParams {
     pub call_args: Vec<proc_macro2::TokenStream>,
 }
 
-pub fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>) -> FfiParams {
+pub fn transform_params(
+    inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
+    custom_types: &CustomTypeRegistry,
+) -> FfiParams {
     inputs
         .iter()
         .filter_map(|arg| match arg {
@@ -90,9 +94,20 @@ pub fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![
                                     syn::Ident::new(&format!("__wire{}", index), name.span());
                                 ffi_cb_args.push(quote! { *const u8 });
                                 ffi_cb_args.push(quote! { usize });
-                                wire_vars.push(quote! {
-                                    let #wire_name = ::riff::__private::wire::encode(&#arg_name);
-                                });
+                                let wire_vars_expr = if contains_custom_types(arg_ty, custom_types) {
+                                    let wire_ty = wire_type_for(arg_ty, custom_types);
+                                    let wire_value_ident = syn::Ident::new(&format!("__wire_value{}", index), name.span());
+                                    let to_wire = to_wire_expr_owned(arg_ty, custom_types, &arg_name);
+                                    quote! {
+                                        let #wire_value_ident: #wire_ty = { #to_wire };
+                                        let #wire_name = ::riff::__private::wire::encode(&#wire_value_ident);
+                                    }
+                                } else {
+                                    quote! {
+                                        let #wire_name = ::riff::__private::wire::encode(&#arg_name);
+                                    }
+                                };
+                                wire_vars.push(wire_vars_expr);
                                 cb_call_args.push(quote! { #wire_name.as_ptr() });
                                 cb_call_args.push(quote! { #wire_name.len() });
                             }
@@ -215,14 +230,31 @@ pub fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.conversions.push(quote! {
-                        let #name: Vec<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
-                            Vec::new()
-                        } else {
-                            let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.conversions.push(quote! {
+                            let #name: #original_ty = if #ptr_name.is_null() || #len_name == 0 {
+                                Vec::new()
+                            } else {
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.conversions.push(quote! {
+                            let #name: Vec<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
+                                Vec::new()
+                            } else {
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.call_args.push(quote! { #name });
                 }
@@ -233,14 +265,31 @@ pub fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.conversions.push(quote! {
-                        let #name: Option<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
-                            None
-                        } else {
-                            let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.conversions.push(quote! {
+                            let #name: #original_ty = if #ptr_name.is_null() || #len_name == 0 {
+                                None
+                            } else {
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.conversions.push(quote! {
+                            let #name: Option<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
+                                None
+                            } else {
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.call_args.push(quote! { #name });
                 }
@@ -251,13 +300,29 @@ pub fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.conversions.push(quote! {
-                        let #name: #record_ty = {
-                            assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
-                            let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.conversions.push(quote! {
+                            let #name: #original_ty = {
+                                assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.conversions.push(quote! {
+                            let #name: #record_ty = {
+                                assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.call_args.push(quote! { #name });
                 }
@@ -282,6 +347,7 @@ pub struct AsyncFfiParams {
 
 pub fn transform_params_async(
     inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
+    custom_types: &CustomTypeRegistry,
 ) -> AsyncFfiParams {
     inputs
         .iter()
@@ -416,14 +482,31 @@ pub fn transform_params_async(
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.pre_spawn.push(quote! {
-                        let #name: Vec<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
-                            Vec::new()
-                        } else {
-                            let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.pre_spawn.push(quote! {
+                            let #name: #original_ty = if #ptr_name.is_null() || #len_name == 0 {
+                                Vec::new()
+                            } else {
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.pre_spawn.push(quote! {
+                            let #name: Vec<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
+                                Vec::new()
+                            } else {
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.move_vars.push(name.clone());
                     acc.call_args.push(quote! { #name });
@@ -435,14 +518,31 @@ pub fn transform_params_async(
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.pre_spawn.push(quote! {
-                        let #name: Option<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
-                            None
-                        } else {
-                            let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.pre_spawn.push(quote! {
+                            let #name: #original_ty = if #ptr_name.is_null() || #len_name == 0 {
+                                None
+                            } else {
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.pre_spawn.push(quote! {
+                            let #name: Option<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
+                                None
+                            } else {
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.move_vars.push(name.clone());
                     acc.call_args.push(quote! { #name });
@@ -454,13 +554,29 @@ pub fn transform_params_async(
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.pre_spawn.push(quote! {
-                        let #name: #record_ty = {
-                            assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
-                            let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.pre_spawn.push(quote! {
+                            let #name: #original_ty = {
+                                assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.pre_spawn.push(quote! {
+                            let #name: #record_ty = {
+                                assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.move_vars.push(name.clone());
                     acc.call_args.push(quote! { #name });
@@ -477,7 +593,10 @@ pub fn transform_params_async(
         )
 }
 
-pub fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiParams {
+pub fn transform_method_params(
+    inputs: impl Iterator<Item = syn::FnArg>,
+    custom_types: &CustomTypeRegistry,
+) -> FfiParams {
     inputs
         .filter_map(|arg| match arg {
             FnArg::Typed(pat_type) => Some(pat_type),
@@ -555,9 +674,20 @@ pub fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiP
                                     syn::Ident::new(&format!("__wire{}", index), name.span());
                                 ffi_cb_args.push(quote! { *const u8 });
                                 ffi_cb_args.push(quote! { usize });
-                                wire_vars.push(quote! {
-                                    let #wire_name = ::riff::__private::wire::encode(&#arg_name);
-                                });
+                                let wire_vars_expr = if contains_custom_types(arg_ty, custom_types) {
+                                    let wire_ty = wire_type_for(arg_ty, custom_types);
+                                    let wire_value_ident = syn::Ident::new(&format!("__wire_value{}", index), name.span());
+                                    let to_wire = to_wire_expr_owned(arg_ty, custom_types, &arg_name);
+                                    quote! {
+                                        let #wire_value_ident: #wire_ty = { #to_wire };
+                                        let #wire_name = ::riff::__private::wire::encode(&#wire_value_ident);
+                                    }
+                                } else {
+                                    quote! {
+                                        let #wire_name = ::riff::__private::wire::encode(&#arg_name);
+                                    }
+                                };
+                                wire_vars.push(wire_vars_expr);
                                 cb_call_args.push(quote! { #wire_name.as_ptr() });
                                 cb_call_args.push(quote! { #wire_name.len() });
                             }
@@ -680,14 +810,31 @@ pub fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiP
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.conversions.push(quote! {
-                        let #name: Vec<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
-                            Vec::new()
-                        } else {
-                            let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.conversions.push(quote! {
+                            let #name: #original_ty = if #ptr_name.is_null() || #len_name == 0 {
+                                Vec::new()
+                            } else {
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.conversions.push(quote! {
+                            let #name: Vec<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
+                                Vec::new()
+                            } else {
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.call_args.push(quote! { #name });
                 }
@@ -698,14 +845,31 @@ pub fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiP
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.conversions.push(quote! {
-                        let #name: Option<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
-                            None
-                        } else {
-                            let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.conversions.push(quote! {
+                            let #name: #original_ty = if #ptr_name.is_null() || #len_name == 0 {
+                                None
+                            } else {
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.conversions.push(quote! {
+                            let #name: Option<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
+                                None
+                            } else {
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.call_args.push(quote! { #name });
                 }
@@ -716,13 +880,29 @@ pub fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiP
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.conversions.push(quote! {
-                        let #name: #record_ty = {
-                            assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
-                            let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.conversions.push(quote! {
+                            let #name: #original_ty = {
+                                assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.conversions.push(quote! {
+                            let #name: #record_ty = {
+                                assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
+                                let __bytes = ::core::slice::from_raw_parts(#ptr_name, #len_name);
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.call_args.push(quote! { #name });
                 }
@@ -737,7 +917,10 @@ pub fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiP
         )
 }
 
-pub fn transform_method_params_async(inputs: impl Iterator<Item = syn::FnArg>) -> AsyncFfiParams {
+pub fn transform_method_params_async(
+    inputs: impl Iterator<Item = syn::FnArg>,
+    custom_types: &CustomTypeRegistry,
+) -> AsyncFfiParams {
     inputs
         .filter_map(|arg| match arg {
             FnArg::Typed(pat_type) => Some(pat_type),
@@ -843,14 +1026,31 @@ pub fn transform_method_params_async(inputs: impl Iterator<Item = syn::FnArg>) -
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.pre_spawn.push(quote! {
-                        let #name: Vec<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
-                            Vec::new()
-                        } else {
-                            let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.pre_spawn.push(quote! {
+                            let #name: #original_ty = if #ptr_name.is_null() || #len_name == 0 {
+                                Vec::new()
+                            } else {
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.pre_spawn.push(quote! {
+                            let #name: Vec<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
+                                Vec::new()
+                            } else {
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.move_vars.push(name.clone());
                     acc.call_args.push(quote! { #name });
@@ -862,14 +1062,31 @@ pub fn transform_method_params_async(inputs: impl Iterator<Item = syn::FnArg>) -
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.pre_spawn.push(quote! {
-                        let #name: Option<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
-                            None
-                        } else {
-                            let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.pre_spawn.push(quote! {
+                            let #name: #original_ty = if #ptr_name.is_null() || #len_name == 0 {
+                                None
+                            } else {
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.pre_spawn.push(quote! {
+                            let #name: Option<#inner_ty> = if #ptr_name.is_null() || #len_name == 0 {
+                                None
+                            } else {
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.move_vars.push(name.clone());
                     acc.call_args.push(quote! { #name });
@@ -881,13 +1098,29 @@ pub fn transform_method_params_async(inputs: impl Iterator<Item = syn::FnArg>) -
                     acc.ffi_params.push(quote! { #ptr_name: *const u8 });
                     acc.ffi_params.push(quote! { #len_name: usize });
 
-                    acc.pre_spawn.push(quote! {
-                        let #name: #record_ty = {
-                            assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
-                            let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
-                            ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
-                        };
-                    });
+                    if contains_custom_types(&pat_type.ty, custom_types) {
+                        let original_ty = &pat_type.ty;
+                        let wire_ty = wire_type_for(original_ty, custom_types);
+                        let wire_value_ident = syn::Ident::new("__riff_wire_value", name.span());
+                        let from_wire = from_wire_expr_owned(original_ty, custom_types, &wire_value_ident);
+                        acc.pre_spawn.push(quote! {
+                            let #name: #original_ty = {
+                                assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                let #wire_value_ident: #wire_ty = ::riff::__private::wire::decode(__bytes)
+                                    .expect(concat!(stringify!(#name), ": wire decode failed"));
+                                #from_wire
+                            };
+                        });
+                    } else {
+                        acc.pre_spawn.push(quote! {
+                            let #name: #record_ty = {
+                                assert!(!#ptr_name.is_null(), concat!(stringify!(#name), ": null pointer"));
+                                let __bytes = unsafe { ::core::slice::from_raw_parts(#ptr_name, #len_name) };
+                                ::riff::__private::wire::decode(__bytes).expect(concat!(stringify!(#name), ": wire decode failed"))
+                            };
+                        });
+                    }
 
                     acc.move_vars.push(name.clone());
                     acc.call_args.push(quote! { #name });
