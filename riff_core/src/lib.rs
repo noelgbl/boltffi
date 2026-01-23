@@ -16,7 +16,7 @@ pub mod subscription;
 pub mod types;
 pub mod wire;
 
-pub use callback::{CallbackHandle, FromCallbackHandle};
+pub use callback::{CallbackForeignType, CallbackHandle, FromCallbackHandle};
 pub use custom_ffi::CustomFfiConvertible;
 pub use handle::HandleBox;
 pub use pending::{CancellationToken, PendingHandle};

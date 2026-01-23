@@ -39,6 +39,13 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
         trait_name.span(),
     );
 
+    let has_async_trait_attr = item_trait.attrs.iter().any(|attr| {
+        attr.path()
+            .segments
+            .last()
+            .is_some_and(|s| s.ident == "async_trait")
+    });
+
     let async_trait_attr = item_trait
         .attrs
         .iter()
@@ -54,6 +61,12 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
         quote! { pub free: extern "C" fn(handle: u64) },
         quote! { pub clone: extern "C" fn(handle: u64) -> u64 },
     ];
+
+    let has_async_methods = item_trait.items.iter().any(|item| {
+        matches!(item, syn::TraitItem::Fn(method) if method.sig.asyncness.is_some())
+    });
+
+    let is_object_safe = !has_async_methods || has_async_trait_attr;
 
     let foreign_impls = item_trait
         .items
@@ -119,29 +132,70 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
             }
             ::riff::__private::CallbackHandle::new(handle, vtable as *const std::ffi::c_void)
         }
+    };
 
-        impl ::riff::__private::FromCallbackHandle for dyn #trait_name {
+    let concrete_impl = quote! {
+        impl ::riff::__private::FromCallbackHandle for #foreign_name {
             unsafe fn arc_from_callback_handle(handle: ::riff::__private::CallbackHandle) -> std::sync::Arc<Self> {
                 debug_assert!(!handle.is_null());
-                let foreign = #foreign_name {
+                std::sync::Arc::new(Self {
                     vtable: handle.vtable() as *const #vtable_name,
                     handle: handle.handle(),
-                };
-                std::sync::Arc::new(foreign)
+                })
             }
 
             unsafe fn box_from_callback_handle(handle: ::riff::__private::CallbackHandle) -> Box<Self> {
                 debug_assert!(!handle.is_null());
-                let foreign = #foreign_name {
+                Box::new(Self {
                     vtable: handle.vtable() as *const #vtable_name,
                     handle: handle.handle(),
-                };
-                Box::new(foreign)
+                })
             }
         }
     };
 
-    Ok(expanded)
+    let dyn_impl = if is_object_safe {
+        quote! {
+            impl ::riff::__private::FromCallbackHandle for dyn #trait_name {
+                unsafe fn arc_from_callback_handle(handle: ::riff::__private::CallbackHandle) -> std::sync::Arc<Self> {
+                    debug_assert!(!handle.is_null());
+                    let foreign = #foreign_name {
+                        vtable: handle.vtable() as *const #vtable_name,
+                        handle: handle.handle(),
+                    };
+                    std::sync::Arc::new(foreign)
+                }
+
+                unsafe fn box_from_callback_handle(handle: ::riff::__private::CallbackHandle) -> Box<Self> {
+                    debug_assert!(!handle.is_null());
+                    let foreign = #foreign_name {
+                        vtable: handle.vtable() as *const #vtable_name,
+                        handle: handle.handle(),
+                    };
+                    Box::new(foreign)
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    let foreign_type_impl = if is_object_safe {
+        quote! {
+            impl ::riff::__private::CallbackForeignType for dyn #trait_name {
+                type Foreign = #foreign_name;
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    Ok(quote! {
+        #expanded
+        #concrete_impl
+        #dyn_impl
+        #foreign_type_impl
+    })
 }
 
 fn expand_method(

@@ -3,6 +3,7 @@ use quote::quote;
 use syn::{DeriveInput, ItemFn, parse_macro_input};
 
 mod callback_trait;
+mod callback_registry;
 mod class;
 mod custom_ffi;
 mod custom_type;

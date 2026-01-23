@@ -43,6 +43,10 @@ pub trait FromCallbackHandle {
     unsafe fn box_from_callback_handle(handle: CallbackHandle) -> Box<Self>;
 }
 
+pub trait CallbackForeignType {
+    type Foreign: FromCallbackHandle;
+}
+
 impl Default for CallbackHandle {
     fn default() -> Self {
         Self::NULL
