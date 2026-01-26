@@ -96,6 +96,9 @@ pub enum ParamRole {
         mutability: Mutability,
         element_abi: AbiType,
     },
+    InString {
+        len_param: ParamName,
+    },
     InEncoded {
         len_param: ParamName,
         codec: CodecPlan,

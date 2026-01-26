@@ -137,12 +137,64 @@ pub struct ClassDef {
 }
 
 #[derive(Debug, Clone)]
-pub struct ConstructorDef {
-    pub name: Option<MethodId>,
-    pub params: Vec<ParamDef>,
-    pub is_fallible: bool,
-    pub doc: Option<String>,
-    pub deprecated: Option<DeprecationInfo>,
+pub enum ConstructorDef {
+    Default {
+        params: Vec<ParamDef>,
+        is_fallible: bool,
+        doc: Option<String>,
+        deprecated: Option<DeprecationInfo>,
+    },
+    NamedFactory {
+        name: MethodId,
+        is_fallible: bool,
+        doc: Option<String>,
+        deprecated: Option<DeprecationInfo>,
+    },
+    NamedInit {
+        name: MethodId,
+        first_param: ParamDef,
+        rest_params: Vec<ParamDef>,
+        is_fallible: bool,
+        doc: Option<String>,
+        deprecated: Option<DeprecationInfo>,
+    },
+}
+
+impl ConstructorDef {
+    pub fn params(&self) -> Vec<&ParamDef> {
+        match self {
+            Self::Default { params, .. } => params.iter().collect(),
+            Self::NamedFactory { .. } => vec![],
+            Self::NamedInit {
+                first_param,
+                rest_params,
+                ..
+            } => std::iter::once(first_param).chain(rest_params).collect(),
+        }
+    }
+
+    pub fn is_fallible(&self) -> bool {
+        match self {
+            Self::Default { is_fallible, .. }
+            | Self::NamedFactory { is_fallible, .. }
+            | Self::NamedInit { is_fallible, .. } => *is_fallible,
+        }
+    }
+
+    pub fn name(&self) -> Option<&MethodId> {
+        match self {
+            Self::Default { .. } => None,
+            Self::NamedFactory { name, .. } | Self::NamedInit { name, .. } => Some(name),
+        }
+    }
+
+    pub fn doc(&self) -> Option<&str> {
+        match self {
+            Self::Default { doc, .. }
+            | Self::NamedFactory { doc, .. }
+            | Self::NamedInit { doc, .. } => doc.as_deref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -164,10 +216,17 @@ pub enum Receiver {
     OwnedSelf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallbackKind {
+    Trait,
+    Closure,
+}
+
 #[derive(Debug, Clone)]
 pub struct CallbackTraitDef {
     pub id: CallbackId,
     pub methods: Vec<CallbackMethodDef>,
+    pub kind: CallbackKind,
     pub doc: Option<String>,
 }
 

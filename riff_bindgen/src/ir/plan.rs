@@ -57,8 +57,12 @@ pub enum ParamStrategy {
         element_abi: AbiType,
         mutability: Mutability,
     },
+    String {
+        mutability: Mutability,
+    },
     Encoded {
         codec: CodecPlan,
+        mutability: Mutability,
     },
     Handle {
         class_id: ClassId,

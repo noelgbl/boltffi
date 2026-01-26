@@ -1,8 +1,9 @@
 use crate::ir::contract::{FfiContract, PackageInfo, TypeCatalog};
 use crate::ir::definitions::{
-    CStyleVariant, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, CustomTypeDef,
-    DataVariant, DeprecationInfo, EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, ParamDef,
-    ParamPassing, Receiver, RecordDef, ReturnDef, StreamDef, StreamMode, VariantPayload,
+    CStyleVariant, CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef,
+    CustomTypeDef, DataVariant, DeprecationInfo, EnumDef, EnumRepr, FieldDef, FunctionDef,
+    MethodDef, ParamDef, ParamPassing, Receiver, RecordDef, ReturnDef, StreamDef, StreamMode,
+    VariantPayload,
 };
 use crate::ir::ids::{
     BuiltinId, CallbackId, ClassId, ConverterPath, CustomTypeId, EnumId, FieldName, FunctionId,
@@ -212,18 +213,37 @@ impl<'m> ContractBuilder<'m> {
     }
 
     fn convert_constructor(&self, ctor: &model::Constructor) -> ConstructorDef {
-        let name = (ctor.name != "new").then(|| MethodId::new(&ctor.name));
+        let params: Vec<_> = ctor
+            .inputs
+            .iter()
+            .map(|p| self.convert_param(&p.name, &p.param_type))
+            .collect();
 
-        ConstructorDef {
-            name,
-            params: ctor
-                .inputs
-                .iter()
-                .map(|p| self.convert_param(&p.name, &p.param_type))
-                .collect(),
-            is_fallible: ctor.is_fallible,
-            doc: ctor.doc.clone(),
-            deprecated: None,
+        if ctor.name == "new" {
+            ConstructorDef::Default {
+                params,
+                is_fallible: ctor.is_fallible,
+                doc: ctor.doc.clone(),
+                deprecated: None,
+            }
+        } else if params.is_empty() {
+            ConstructorDef::NamedFactory {
+                name: MethodId::new(&ctor.name),
+                is_fallible: ctor.is_fallible,
+                doc: ctor.doc.clone(),
+                deprecated: None,
+            }
+        } else {
+            let mut params_iter = params.into_iter();
+            let first_param = params_iter.next().expect("params is non-empty");
+            ConstructorDef::NamedInit {
+                name: MethodId::new(&ctor.name),
+                first_param,
+                rest_params: params_iter.collect(),
+                is_fallible: ctor.is_fallible,
+                doc: ctor.doc.clone(),
+                deprecated: None,
+            }
         }
     }
 
@@ -261,6 +281,7 @@ impl<'m> ContractBuilder<'m> {
                     doc: m.doc.clone(),
                 })
                 .collect(),
+            kind: CallbackKind::Trait,
             doc: cb.doc.clone(),
         }
     }
@@ -313,6 +334,7 @@ impl<'m> ContractBuilder<'m> {
                 is_async: false,
                 doc: None,
             }],
+            kind: CallbackKind::Closure,
             doc: None,
         }
     }

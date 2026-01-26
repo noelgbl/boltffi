@@ -59,9 +59,9 @@ pub fn validate_contract(contract: &FfiContract) -> Result<(), Vec<ValidationErr
             let ctx = format!(
                 "{}::{}",
                 class.id,
-                ctor.name.as_ref().map(|n| n.as_str()).unwrap_or("new")
+                ctor.name().map(|n| n.as_str()).unwrap_or("new")
             );
-            ctor.params.iter().for_each(|param| {
+            ctor.params().into_iter().for_each(|param| {
                 validate_param_type(
                     &param.type_expr,
                     &param.passing,

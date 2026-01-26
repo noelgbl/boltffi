@@ -454,13 +454,12 @@ impl<'c> Lowerer<'c> {
                     role: ParamRole::InDirect,
                 },
             ],
-            ParamStrategy::Encoded { codec } => vec![
+            ParamStrategy::String { .. } => vec![
                 AbiParam {
                     name: param.name.clone(),
                     ffi_type: AbiType::Pointer,
-                    role: ParamRole::InEncoded {
+                    role: ParamRole::InString {
                         len_param: len_name.clone(),
-                        codec: codec.clone(),
                     },
                 },
                 AbiParam {
@@ -469,6 +468,30 @@ impl<'c> Lowerer<'c> {
                     role: ParamRole::InDirect,
                 },
             ],
+            ParamStrategy::Encoded { codec, mutability } => {
+                let role = match mutability {
+                    Mutability::Mutable => ParamRole::OutBuffer {
+                        len_param: len_name.clone(),
+                        codec: codec.clone(),
+                    },
+                    Mutability::Shared => ParamRole::InEncoded {
+                        len_param: len_name.clone(),
+                        codec: codec.clone(),
+                    },
+                };
+                vec![
+                    AbiParam {
+                        name: param.name.clone(),
+                        ffi_type: AbiType::Pointer,
+                        role,
+                    },
+                    AbiParam {
+                        name: len_name,
+                        ffi_type: AbiType::U64,
+                        role: ParamRole::InDirect,
+                    },
+                ]
+            }
             ParamStrategy::Handle { class_id, nullable } => vec![AbiParam {
                 name: param.name.clone(),
                 ffi_type: AbiType::Pointer,
@@ -776,9 +799,13 @@ impl<'c> Lowerer<'c> {
     }
 
     fn lower_constructor(&self, class: &ClassDef, ctor: &ConstructorDef) -> CallPlan {
-        let params = ctor.params.iter().map(|p| self.lower_param(p)).collect();
+        let params = ctor
+            .params()
+            .into_iter()
+            .map(|p| self.lower_param(p))
+            .collect();
 
-        let returns = if ctor.is_fallible {
+        let returns = if ctor.is_fallible() {
             ReturnPlan::Fallible {
                 ok: ReturnValuePlan::Handle {
                     class_id: class.id.clone(),
@@ -795,7 +822,7 @@ impl<'c> Lowerer<'c> {
 
         CallPlan {
             target: CallTarget::GlobalSymbol(
-                self.constructor_symbol(&class.id, ctor.name.as_ref()),
+                self.constructor_symbol(&class.id, ctor.name()),
             ),
             params,
             kind: CallPlanKind::Sync { returns },
@@ -920,7 +947,9 @@ impl<'c> Lowerer<'c> {
                 abi_type: primitive_to_abi(*p),
             }),
 
-            TypeExpr::String | TypeExpr::Bytes => ParamStrategy::Buffer {
+            TypeExpr::String => ParamStrategy::String { mutability },
+
+            TypeExpr::Bytes => ParamStrategy::Buffer {
                 element_abi: AbiType::U8,
                 mutability,
             },
@@ -932,6 +961,7 @@ impl<'c> Lowerer<'c> {
                 },
                 _ => ParamStrategy::Encoded {
                     codec: self.build_codec(type_expr),
+                    mutability,
                 },
             },
 
@@ -952,6 +982,7 @@ impl<'c> Lowerer<'c> {
                 },
                 _ => ParamStrategy::Encoded {
                     codec: self.build_codec(type_expr),
+                    mutability,
                 },
             },
 
@@ -963,6 +994,7 @@ impl<'c> Lowerer<'c> {
 
             _ => ParamStrategy::Encoded {
                 codec: self.build_codec(type_expr),
+                mutability,
             },
         }
     }
@@ -1429,8 +1461,8 @@ mod tests {
     use super::*;
     use crate::ir::contract::{FfiContract, PackageInfo, TypeCatalog};
     use crate::ir::definitions::{
-        CallbackMethodDef, ClassDef, ConstructorDef, FieldDef, FunctionDef, MethodDef, ParamDef,
-        ParamPassing, Receiver, RecordDef, ReturnDef,
+        CallbackKind, CallbackMethodDef, ClassDef, ConstructorDef, FieldDef, FunctionDef,
+        MethodDef, ParamDef, ParamPassing, Receiver, RecordDef, ReturnDef,
     };
     use crate::ir::ids::{
         CallbackId, ClassId, FieldName, FunctionId, MethodId, ParamName, RecordId,
@@ -1901,8 +1933,7 @@ mod tests {
         let lowerer = lowerer_for_contract(&contract);
 
         let class = contract.catalog.resolve_class(&class_id).unwrap();
-        let ctor = ConstructorDef {
-            name: None,
+        let ctor = ConstructorDef::Default {
             params: vec![],
             is_fallible: false,
             doc: None,
@@ -1938,9 +1969,8 @@ mod tests {
         let lowerer = lowerer_for_contract(&contract);
 
         let class = contract.catalog.resolve_class(&class_id).unwrap();
-        let ctor = ConstructorDef {
-            name: Some(MethodId::new("try_new")),
-            params: vec![],
+        let ctor = ConstructorDef::NamedFactory {
+            name: MethodId::new("try_new"),
             is_fallible: true,
             doc: None,
             deprecated: None,
@@ -1970,6 +2000,7 @@ mod tests {
                 is_async: false,
                 doc: None,
             }],
+            kind: CallbackKind::Trait,
             doc: None,
         };
 
@@ -2001,6 +2032,7 @@ mod tests {
                 is_async: false,
                 doc: None,
             }],
+            kind: CallbackKind::Trait,
             doc: None,
         };
 
@@ -2177,9 +2209,8 @@ mod tests {
 
         let lowerer = lowerer_for_contract(&contract);
         let class = contract.catalog.resolve_class(&class_id).unwrap();
-        let ctor = ConstructorDef {
-            name: Some(MethodId::new("connect")),
-            params: vec![],
+        let ctor = ConstructorDef::NamedFactory {
+            name: MethodId::new("connect"),
             is_fallible: true,
             doc: None,
             deprecated: None,
@@ -2339,6 +2370,7 @@ mod tests {
                 is_async: false,
                 doc: None,
             }],
+            kind: CallbackKind::Trait,
             doc: None,
         };
 
@@ -2437,8 +2469,7 @@ mod tests {
         let lowerer = lowerer_for_contract(&contract);
         let class = contract.catalog.resolve_class(&class_id).unwrap();
 
-        let default_ctor = ConstructorDef {
-            name: None,
+        let default_ctor = ConstructorDef::Default {
             params: vec![],
             is_fallible: false,
             doc: None,
@@ -2452,9 +2483,8 @@ mod tests {
             _ => panic!("expected GlobalSymbol"),
         }
 
-        let named_ctor = ConstructorDef {
-            name: Some(MethodId::new("with_config")),
-            params: vec![],
+        let named_ctor = ConstructorDef::NamedFactory {
+            name: MethodId::new("with_config"),
             is_fallible: false,
             doc: None,
             deprecated: None,
