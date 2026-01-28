@@ -39,6 +39,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
     match options.target {
         GenerateTarget::Swift if options.use_ir => generate_swift_ir(config, options.output),
         GenerateTarget::Swift => generate_swift(config, options.output),
+        GenerateTarget::Kotlin if options.use_ir => generate_kotlin_ir(config, options.output),
         GenerateTarget::Kotlin => generate_kotlin(config, options.output),
         GenerateTarget::Header => generate_header(config, options.output),
         GenerateTarget::All => {
@@ -47,7 +48,11 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
             } else {
                 generate_swift(config, options.output.clone())?;
             }
-            generate_kotlin(config, options.output.clone())?;
+            if options.use_ir {
+                generate_kotlin_ir(config, options.output.clone())?;
+            } else {
+                generate_kotlin(config, options.output.clone())?;
+            }
             generate_header(config, options.output)?;
             Ok(())
         }
@@ -200,6 +205,72 @@ fn generate_kotlin(config: &Config, output: Option<PathBuf>) -> Result<()> {
         source,
     })?;
     println!("Generated: {}", jni_path.display());
+
+    Ok(())
+}
+
+fn generate_kotlin_ir(config: &Config, output: Option<PathBuf>) -> Result<()> {
+    let package_name = config.android_kotlin_package();
+    let package_path = package_name.replace('.', "/");
+
+    let output_dir = output.unwrap_or_else(|| config.android_kotlin_output());
+    let kotlin_dir = output_dir.join(&package_path);
+    let jni_dir = output_dir.join("jni");
+
+    std::fs::create_dir_all(&kotlin_dir).map_err(|source| CliError::CreateDirectoryFailed {
+        path: kotlin_dir.clone(),
+        source,
+    })?;
+    std::fs::create_dir_all(&jni_dir).map_err(|source| CliError::CreateDirectoryFailed {
+        path: jni_dir.clone(),
+        source,
+    })?;
+
+    let crate_dir = std::env::current_dir()
+        .and_then(|p| p.canonicalize())
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let crate_name = config.library_name();
+
+    let mut module = scan_crate(&crate_dir, crate_name).map_err(|e| CliError::CommandFailed {
+        command: format!("scan_crate: {}", e),
+        status: None,
+    })?;
+
+    let factory_style = match config.android.kotlin.factory_style {
+        ConfigFactoryStyle::Constructors => FactoryStyle::Constructors,
+        ConfigFactoryStyle::CompanionMethods => FactoryStyle::CompanionMethods,
+    };
+    let module_name = config.android_kotlin_module_name();
+    let options = KotlinOptions {
+        factory_style,
+        api_style: match config.android.kotlin.api_style {
+            KotlinApiStyle::TopLevel => riff_bindgen::KotlinApiStyle::TopLevel,
+            KotlinApiStyle::ModuleObject => riff_bindgen::KotlinApiStyle::ModuleObject,
+        },
+        module_object_name: Some(module_name.clone()),
+        library_name: config
+            .android_kotlin_library_name()
+            .map(|name| name.to_string()),
+    };
+    let kotlin_code = Kotlin::render_module_with_options(&module, &package_name, &options);
+    let kotlin_path = kotlin_dir.join(format!("{}.kt", module_name));
+    std::fs::write(&kotlin_path, kotlin_code).map_err(|source| CliError::WriteFailed {
+        path: kotlin_path.clone(),
+        source,
+    })?;
+    println!("Generated: {}", kotlin_path.display());
+
+    let contract = ir::build_contract(&mut module);
+    let abi_contract = ir::Lowerer::new(&contract).to_abi_contract();
+    let jni_module =
+        render::jni::JniLowerer::new(&contract, &abi_contract, package_name, module_name).lower();
+    let jni_code = render::jni::JniEmitter::emit(&jni_module);
+    let jni_path = jni_dir.join("jni_glue.c");
+    std::fs::write(&jni_path, jni_code).map_err(|source| CliError::WriteFailed {
+        path: jni_path.clone(),
+        source,
+    })?;
+    println!("Generated (IR): {}", jni_path.display());
 
     Ok(())
 }

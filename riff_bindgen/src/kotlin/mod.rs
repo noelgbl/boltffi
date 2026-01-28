@@ -3,7 +3,7 @@ mod jni;
 mod layout;
 mod marshal;
 mod names;
-mod primitives;
+pub mod primitives;
 mod return_abi;
 mod templates;
 mod types;

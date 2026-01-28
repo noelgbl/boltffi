@@ -344,11 +344,7 @@ fn uses_offset_in_read_op(op: &ReadOp) -> bool {
 }
 
 fn offset_uses(offset: &OffsetExpr) -> bool {
-    match offset {
-        OffsetExpr::Fixed(_) => false,
-        OffsetExpr::Base | OffsetExpr::BasePlus(_) => true,
-        OffsetExpr::Var(_) | OffsetExpr::VarPlus(_, _) => false,
-    }
+    matches!(offset, OffsetExpr::Base | OffsetExpr::BasePlus(_))
 }
 
 #[derive(Debug, Clone)]

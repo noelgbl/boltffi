@@ -1,5 +1,5 @@
-pub mod swift;
 pub mod jni;
+pub mod swift;
 
 use crate::ir::{AbiContract, FfiContract};
 

@@ -3,19 +3,19 @@ use std::collections::{HashMap, HashSet};
 use riff_ffi_rules::naming;
 
 use crate::ir::abi::{
-    AbiCall, AbiCallbackInvocation, AbiCallbackMethod, AbiContract, AbiParam, AsyncCall,
-    AsyncResultTransport, CallId, CallMode, ErrorTransport, ParamRole, ReturnTransport,
+    AbiCall, AbiCallbackInvocation, AbiContract, AbiParam, AsyncCall, AsyncResultTransport,
+    CallMode, ErrorTransport, ParamRole, ReturnTransport,
 };
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
     CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, EnumRepr,
     FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver, ReturnDef,
 };
-use crate::ir::ids::{CallbackId, ClassId, FunctionId, MethodId, ParamName, RecordId};
+use crate::ir::ids::{CallbackId, EnumId, ParamName, RecordId};
 use crate::ir::ops::SizeExpr;
-use crate::ir::plan::{AbiType, CallbackStyle};
-use crate::ir::types::{BuiltinKind, PrimitiveType, TypeExpr};
-use crate::kotlin::{names::NamingConvention, primitives};
+use crate::ir::plan::AbiType;
+use crate::ir::types::{PrimitiveType, TypeExpr};
+use crate::kotlin::{NamingConvention, primitives};
 
 use super::plan::{
     JniAsyncCallbackInvoker, JniAsyncCallbackMethod, JniAsyncFunction, JniCallbackCParam,
@@ -32,7 +32,12 @@ pub struct JniLowerer<'a> {
 }
 
 impl<'a> JniLowerer<'a> {
-    pub fn new(contract: &'a FfiContract, abi: &'a AbiContract, package: String, class_name: String) -> Self {
+    pub fn new(
+        contract: &'a FfiContract,
+        abi: &'a AbiContract,
+        package: String,
+        class_name: String,
+    ) -> Self {
         Self {
             contract,
             abi,
@@ -46,6 +51,7 @@ impl<'a> JniLowerer<'a> {
         let jni_prefix = self.jni_prefix();
         let package_path = self.package.replace('.', "/");
         let module_name = self.contract.package.name.clone();
+        let used_callbacks = self.collect_used_callbacks();
 
         let functions = self
             .contract
@@ -63,7 +69,7 @@ impl<'a> JniLowerer<'a> {
             .map(|func| self.lower_wire_function(func, &jni_prefix))
             .collect();
 
-        let async_functions = self
+        let async_functions: Vec<JniAsyncFunction> = self
             .contract
             .functions
             .iter()
@@ -71,7 +77,7 @@ impl<'a> JniLowerer<'a> {
             .map(|func| self.lower_async_function(func, &jni_prefix))
             .collect();
 
-        let classes = self
+        let classes: Vec<JniClass> = self
             .contract
             .catalog
             .all_classes()
@@ -85,22 +91,16 @@ impl<'a> JniLowerer<'a> {
             .map(|callback| (callback.callback_id.clone(), callback))
             .collect::<HashMap<_, _>>();
 
-        let callback_traits = self
+        let callback_traits: Vec<JniCallbackTrait> = self
             .contract
             .catalog
             .all_callbacks()
+            .filter(|callback| !matches!(callback.kind, CallbackKind::Closure))
             .filter(|callback| !callback.methods.is_empty())
             .filter_map(|callback| {
-                callback_index
-                    .get(&callback.id)
-                    .map(|abi_callback| {
-                        self.lower_callback_trait(
-                            callback,
-                            abi_callback,
-                            &package_path,
-                            &jni_prefix,
-                        )
-                    })
+                callback_index.get(&callback.id).map(|abi_callback| {
+                    self.lower_callback_trait(callback, abi_callback, &package_path, &jni_prefix)
+                })
             })
             .collect();
 
@@ -110,7 +110,7 @@ impl<'a> JniLowerer<'a> {
 
         let async_callback_invokers = self.collect_async_invokers(&callback_traits, &jni_prefix);
 
-        let closure_trampolines = self.collect_closure_trampolines(&package_path);
+        let closure_trampolines = self.collect_closure_trampolines(&package_path, &used_callbacks);
 
         let has_async = !async_functions.is_empty()
             || classes.iter().any(|class| !class.async_methods.is_empty())
@@ -141,15 +141,60 @@ impl<'a> JniLowerer<'a> {
             .replace('-', "_1")
     }
 
-    fn is_primitive_only(&self, func: &FunctionDef) -> bool {
-        let returns_ok = match &func.returns {
-            ReturnDef::Void => true,
-            ReturnDef::Value(TypeExpr::Void) => true,
-            ReturnDef::Value(TypeExpr::Primitive(_)) => true,
-            _ => false,
-        };
+    fn collect_used_callbacks(&self) -> HashSet<CallbackId> {
+        let mut used = HashSet::new();
 
-        let params_ok = func.params.iter().all(|param| matches!(param.type_expr, TypeExpr::Primitive(_)));
+        self.abi
+            .calls
+            .iter()
+            .for_each(|call| self.collect_used_from_call(call, &mut used));
+
+        used
+    }
+
+    fn collect_used_from_call(&self, call: &AbiCall, used: &mut HashSet<CallbackId>) {
+        call.params
+            .iter()
+            .for_each(|param| self.collect_used_from_param(&param.role, used));
+        self.collect_used_from_return(&call.return_, used);
+        self.collect_used_from_error(&call.error, used);
+        match &call.mode {
+            CallMode::Sync => {}
+            CallMode::Async(async_call) => self.collect_used_from_async(async_call.as_ref(), used),
+        }
+    }
+
+    fn collect_used_from_param(&self, role: &ParamRole, used: &mut HashSet<CallbackId>) {
+        if let ParamRole::InCallback { callback_id, .. } = role {
+            used.insert(callback_id.clone());
+        }
+    }
+
+    fn collect_used_from_return(&self, returns: &ReturnTransport, used: &mut HashSet<CallbackId>) {
+        if let ReturnTransport::Callback { callback_id, .. } = returns {
+            used.insert(callback_id.clone());
+        }
+    }
+
+    fn collect_used_from_async(&self, async_call: &AsyncCall, used: &mut HashSet<CallbackId>) {
+        if let AsyncResultTransport::Callback { callback_id, .. } = &async_call.result {
+            used.insert(callback_id.clone());
+        }
+        self.collect_used_from_error(&async_call.error, used);
+    }
+
+    fn collect_used_from_error(&self, _error: &ErrorTransport, _used: &mut HashSet<CallbackId>) {}
+
+    fn is_primitive_only(&self, func: &FunctionDef) -> bool {
+        let returns_ok = matches!(
+            &func.returns,
+            ReturnDef::Void | ReturnDef::Value(TypeExpr::Void | TypeExpr::Primitive(_))
+        );
+
+        let params_ok = func
+            .params
+            .iter()
+            .all(|param| matches!(param.type_expr, TypeExpr::Primitive(_)));
 
         returns_ok && params_ok
     }
@@ -216,7 +261,7 @@ impl<'a> JniLowerer<'a> {
 
         let return_kind = self.return_kind(&func.returns, func.id.as_str());
 
-        let jni_return = self.return_kind_jni_return(&return_kind).to_string();
+        let jni_return = self.return_kind_jni_return(&return_kind);
         let jni_params = self.format_jni_params(&params);
 
         JniFunction {
@@ -271,7 +316,7 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn lower_class(&self, class: &ClassDef, jni_prefix: &str, prefix: &str) -> JniClass {
+    fn lower_class(&self, class: &ClassDef, jni_prefix: &str, _prefix: &str) -> JniClass {
         let ffi_prefix = naming::class_ffi_prefix(class.id.as_str()).into_string();
 
         let ctors = class
@@ -307,18 +352,30 @@ impl<'a> JniLowerer<'a> {
 
     fn constructor_supported(&self, ctor: &ConstructorDef) -> bool {
         let params = ctor.params();
-        params
-            .iter()
-            .all(|param| self.supports_param_type(&param.type_expr))
+        params.iter().all(|param| self.supports_param(param))
     }
 
     fn method_supported(&self, method: &MethodDef) -> bool {
-        let params_ok = method
-            .params
-            .iter()
-            .all(|param| self.supports_param_type(&param.type_expr));
+        let params_ok = method.params.iter().all(|param| self.supports_param(param));
 
         params_ok && self.supports_return_type(&method.returns)
+    }
+
+    fn supports_param(&self, param: &ParamDef) -> bool {
+        match &param.type_expr {
+            TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Enum(_) => true,
+            TypeExpr::Handle(_) | TypeExpr::Callback(_) => true,
+            TypeExpr::Record(id) => self.is_record_blittable(id),
+            TypeExpr::Vec(inner) => match inner.as_ref() {
+                TypeExpr::Primitive(_) => true,
+                TypeExpr::Record(id) => {
+                    matches!(param.passing, ParamPassing::Value) && self.is_record_blittable(id)
+                }
+                _ => false,
+            },
+            TypeExpr::Option(inner) => self.supports_option_inner(inner),
+            _ => false,
+        }
     }
 
     fn supports_param_type(&self, ty: &TypeExpr) -> bool {
@@ -337,7 +394,11 @@ impl<'a> JniLowerer<'a> {
 
     fn supports_option_inner(&self, inner: &TypeExpr) -> bool {
         match inner {
-            TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Enum(_) => true,
+            TypeExpr::Primitive(_)
+            | TypeExpr::String
+            | TypeExpr::Enum(_)
+            | TypeExpr::Handle(_)
+            | TypeExpr::Callback(_) => true,
             TypeExpr::Record(id) => self.is_record_blittable(id),
             TypeExpr::Vec(inner) => match inner.as_ref() {
                 TypeExpr::Primitive(_) => true,
@@ -369,7 +430,12 @@ impl<'a> JniLowerer<'a> {
             }
     }
 
-    fn lower_method(&self, class: &ClassDef, method: &MethodDef, jni_prefix: &str) -> JniWireMethod {
+    fn lower_method(
+        &self,
+        class: &ClassDef,
+        method: &MethodDef,
+        jni_prefix: &str,
+    ) -> JniWireMethod {
         let ffi_name = naming::method_ffi_name(class.id.as_str(), method.id.as_str()).into_string();
         let jni_name = format!("Java_{}_Native_{}", jni_prefix, ffi_name.replace('_', "_1"));
 
@@ -465,7 +531,12 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn lower_async_method(&self, class: &ClassDef, method: &MethodDef, jni_prefix: &str) -> JniAsyncFunction {
+    fn lower_async_method(
+        &self,
+        class: &ClassDef,
+        method: &MethodDef,
+        jni_prefix: &str,
+    ) -> JniAsyncFunction {
         let ffi_name = naming::method_ffi_name(class.id.as_str(), method.id.as_str()).into_string();
         let jni_func_name = ffi_name.replace('_', "_1");
 
@@ -530,11 +601,29 @@ impl<'a> JniLowerer<'a> {
         let data_enum_info = self.data_enum_param_info(&param.type_expr);
 
         let is_wire_param = self.needs_wire_encoding(&param.type_expr);
-        let jni_type = self.param_jni_type(&param.type_expr, is_wire_param, data_enum_info.is_some(), array_primitive.is_some());
+        let is_closure = matches!(
+            param.type_expr,
+            TypeExpr::Callback(ref callback_id) if self.is_closure_callback(callback_id)
+        );
+        let jni_type = self.param_jni_type(
+            &param.type_expr,
+            is_wire_param,
+            data_enum_info.is_some(),
+            array_primitive.is_some(),
+            is_closure,
+        );
 
         let jni_decl = format!("{} {}", jni_type, name);
 
-        let ffi_arg = self.param_ffi_arg(&name, &param.type_expr, array_primitive, array_is_mutable, is_wire_param, record_info.clone(), data_enum_info.clone());
+        let ffi_arg = self.param_ffi_arg(
+            &name,
+            &param.type_expr,
+            array_primitive,
+            array_is_mutable,
+            is_wire_param,
+            record_info.clone(),
+            data_enum_info.clone(),
+        );
 
         let record_struct_size = record_info
             .as_ref()
@@ -550,9 +639,6 @@ impl<'a> JniLowerer<'a> {
 
         let array_release_mode = if array_is_mutable { "0" } else { "JNI_ABORT" }.to_string();
 
-        let is_closure = matches!(param.type_expr, TypeExpr::Callback(_))
-            && matches!(param.passing, ParamPassing::ImplTrait);
-
         JniParam {
             name,
             ffi_arg,
@@ -562,10 +648,10 @@ impl<'a> JniLowerer<'a> {
             is_wire_param,
             is_data_enum,
             is_record_buffer,
-            is_closure,
             record_struct_size,
             array_c_type,
             array_release_mode,
+            is_closure,
         }
     }
 
@@ -575,7 +661,12 @@ impl<'a> JniLowerer<'a> {
         is_wire_param: bool,
         is_data_enum: bool,
         is_array: bool,
+        is_closure: bool,
     ) -> String {
+        if is_closure {
+            return "jobject".to_string();
+        }
+
         if is_data_enum || is_wire_param {
             return "jobject".to_string();
         }
@@ -601,7 +692,10 @@ impl<'a> JniLowerer<'a> {
                 TypeExpr::Primitive(PrimitiveType::I16 | PrimitiveType::U16) => "jshortArray",
                 TypeExpr::Primitive(PrimitiveType::I32 | PrimitiveType::U32) => "jintArray",
                 TypeExpr::Primitive(
-                    PrimitiveType::I64 | PrimitiveType::U64 | PrimitiveType::ISize | PrimitiveType::USize,
+                    PrimitiveType::I64
+                    | PrimitiveType::U64
+                    | PrimitiveType::ISize
+                    | PrimitiveType::USize,
                 ) => "jlongArray",
                 TypeExpr::Primitive(PrimitiveType::F32) => "jfloatArray",
                 TypeExpr::Primitive(PrimitiveType::F64) => "jdoubleArray",
@@ -661,9 +755,14 @@ impl<'a> JniLowerer<'a> {
 
     fn needs_wire_encoding(&self, ty: &TypeExpr) -> bool {
         match ty {
-            TypeExpr::Builtin(_) | TypeExpr::Record(_) | TypeExpr::Enum(_) | TypeExpr::Custom(_) => true,
+            TypeExpr::Builtin(_)
+            | TypeExpr::Record(_)
+            | TypeExpr::Enum(_)
+            | TypeExpr::Custom(_) => true,
             TypeExpr::Vec(inner) => !matches!(inner.as_ref(), TypeExpr::Primitive(_)),
-            TypeExpr::Option(inner) => !matches!(inner.as_ref(), TypeExpr::Handle(_) | TypeExpr::Callback(_)),
+            TypeExpr::Option(inner) => {
+                !matches!(inner.as_ref(), TypeExpr::Handle(_) | TypeExpr::Callback(_))
+            }
             _ => false,
         }
     }
@@ -696,6 +795,7 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn param_ffi_arg(
         &self,
         name: &str,
@@ -734,11 +834,32 @@ impl<'a> JniLowerer<'a> {
         match ty {
             TypeExpr::Handle(_) => format!("(void*){}", name),
             TypeExpr::Callback(callback_id) => {
-                let create_fn = naming::callback_create_fn(callback_id.as_str()).into_string();
-                format!("{}((uint64_t){})", create_fn, name)
+                if self.is_closure_callback(callback_id) {
+                    let trampoline = self.closure_trampoline_name(callback_id);
+                    format!("{}, (void*)_{}_ref", trampoline, name)
+                } else {
+                    let create_fn = naming::callback_create_fn(callback_id.as_str()).into_string();
+                    format!("{}((uint64_t){})", create_fn, name)
+                }
             }
             _ => name.to_string(),
         }
+    }
+
+    fn is_closure_callback(&self, callback_id: &CallbackId) -> bool {
+        self.contract
+            .catalog
+            .resolve_callback(callback_id)
+            .map(|callback| matches!(callback.kind, CallbackKind::Closure))
+            .unwrap_or(false)
+    }
+
+    fn closure_trampoline_name(&self, callback_id: &CallbackId) -> String {
+        let signature_id = callback_id
+            .as_str()
+            .strip_prefix("__Closure_")
+            .unwrap_or(callback_id.as_str());
+        format!("trampoline_{}", signature_id)
     }
 
     fn format_jni_params(&self, params: &[JniParam]) -> String {
@@ -785,7 +906,10 @@ impl<'a> JniLowerer<'a> {
                 .map(|_| {
                     let struct_size = self.data_enum_struct_size(id);
                     let enum_name = NamingConvention::class_name(id.as_str());
-                    JniReturnKind::DataEnum { enum_name, struct_size }
+                    JniReturnKind::DataEnum {
+                        enum_name,
+                        struct_size,
+                    }
                 })
                 .unwrap_or(JniReturnKind::CStyleEnum),
             TypeExpr::Option(inner) => {
@@ -796,16 +920,16 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn return_kind_jni_return(&self, kind: &JniReturnKind) -> &'static str {
+    fn return_kind_jni_return(&self, kind: &JniReturnKind) -> String {
         match kind {
-            JniReturnKind::Void => "void",
-            JniReturnKind::Primitive { jni_type } => jni_type.as_str(),
-            JniReturnKind::String { .. } => "jstring",
-            JniReturnKind::Vec { .. } => "jobject",
-            JniReturnKind::CStyleEnum => "jint",
-            JniReturnKind::DataEnum { .. } => "jobject",
-            JniReturnKind::Option(_) => "jobject",
-            JniReturnKind::Result(_) => "jobject",
+            JniReturnKind::Void => "void".to_string(),
+            JniReturnKind::Primitive { jni_type } => jni_type.clone(),
+            JniReturnKind::String { .. } => "jstring".to_string(),
+            JniReturnKind::Vec { .. } => "jobject".to_string(),
+            JniReturnKind::CStyleEnum => "jint".to_string(),
+            JniReturnKind::DataEnum { .. } => "jobject".to_string(),
+            JniReturnKind::Option(_) => "jobject".to_string(),
+            JniReturnKind::Result(_) => "jobject".to_string(),
         }
     }
 
@@ -841,9 +965,10 @@ impl<'a> JniLowerer<'a> {
             PrimitiveType::I8 | PrimitiveType::U8 => "jbyte".to_string(),
             PrimitiveType::I16 | PrimitiveType::U16 => "jshort".to_string(),
             PrimitiveType::I32 | PrimitiveType::U32 => "jint".to_string(),
-            PrimitiveType::I64 | PrimitiveType::U64 | PrimitiveType::ISize | PrimitiveType::USize => {
-                "jlong".to_string()
-            }
+            PrimitiveType::I64
+            | PrimitiveType::U64
+            | PrimitiveType::ISize
+            | PrimitiveType::USize => "jlong".to_string(),
             PrimitiveType::F32 => "jfloat".to_string(),
             PrimitiveType::F64 => "jdouble".to_string(),
         }
@@ -867,6 +992,7 @@ impl<'a> JniLowerer<'a> {
 
     fn primitive_return_cast(&self, primitive: PrimitiveType) -> String {
         match primitive {
+            PrimitiveType::Bool => "(jboolean)".to_string(),
             PrimitiveType::U8 => "(jbyte)".to_string(),
             PrimitiveType::U16 => "(jshort)".to_string(),
             PrimitiveType::U32 => "(jint)".to_string(),
@@ -876,26 +1002,11 @@ impl<'a> JniLowerer<'a> {
     }
 
     fn result_view(&self, ok: &TypeExpr, err: &TypeExpr, func_name: &str) -> JniResultView {
-        let ok_variant = self.result_variant(ok);
-        let err_variant = self.result_variant(err);
+        let len_fn = naming::function_ffi_vec_len(func_name).into_string();
+        let copy_fn = naming::function_ffi_vec_copy_into(func_name).into_string();
 
-        let ok_variant = match ok_variant {
-            JniResultVariant::VecPrimitive { info } => JniResultVariant::VecPrimitive { info },
-            JniResultVariant::VecRecord { len_fn, copy_fn, struct_size } => {
-                JniResultVariant::VecRecord { len_fn, copy_fn, struct_size }
-            }
-            _ => ok_variant,
-        };
-
-        let err_variant = match err_variant {
-            JniResultVariant::VecPrimitive { info } => JniResultVariant::VecPrimitive { info },
-            JniResultVariant::VecRecord { len_fn, copy_fn, struct_size } => {
-                JniResultVariant::VecRecord { len_fn, copy_fn, struct_size }
-            }
-            _ => err_variant,
-        };
-
-        let _ = func_name;
+        let ok_variant = self.result_variant(ok, &len_fn, &copy_fn);
+        let err_variant = self.result_variant(err, &len_fn, &copy_fn);
 
         JniResultView {
             ok: ok_variant,
@@ -903,7 +1014,7 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn result_variant(&self, ty: &TypeExpr) -> JniResultVariant {
+    fn result_variant(&self, ty: &TypeExpr, len_fn: &str, copy_fn: &str) -> JniResultVariant {
         match ty {
             TypeExpr::Void => JniResultVariant::Void,
             TypeExpr::Primitive(p) => JniResultVariant::Primitive {
@@ -914,14 +1025,34 @@ impl<'a> JniLowerer<'a> {
             TypeExpr::Record(id) => JniResultVariant::Record {
                 c_type: NamingConvention::class_name(id.as_str()),
                 jni_type: "jobject".to_string(),
+                struct_size: self.record_struct_size(id),
             },
+            TypeExpr::Enum(id) => {
+                let enum_def = self.contract.catalog.resolve_enum(id);
+                let is_data_enum = enum_def
+                    .as_ref()
+                    .map(|def| matches!(def.repr, EnumRepr::Data { .. }) || def.is_error)
+                    .unwrap_or(false);
+                if is_data_enum {
+                    JniResultVariant::DataEnum {
+                        jni_type: "jobject".to_string(),
+                        struct_size: self.data_enum_struct_size(id),
+                    }
+                } else {
+                    JniResultVariant::Enum {
+                        jni_type: "jint".to_string(),
+                    }
+                }
+            }
             TypeExpr::Vec(inner) => match inner.as_ref() {
                 TypeExpr::Primitive(p) => JniResultVariant::VecPrimitive {
                     info: self.vec_primitive_info(*p),
+                    len_fn: len_fn.to_string(),
+                    copy_fn: copy_fn.to_string(),
                 },
                 TypeExpr::Record(id) => JniResultVariant::VecRecord {
-                    len_fn: naming::function_ffi_vec_len(id.as_str()).into_string(),
-                    copy_fn: naming::function_ffi_vec_copy_into(id.as_str()).into_string(),
+                    len_fn: len_fn.to_string(),
+                    copy_fn: copy_fn.to_string(),
                     struct_size: self.record_struct_size(id),
                 },
                 _ => JniResultVariant::Void,
@@ -993,7 +1124,9 @@ impl<'a> JniLowerer<'a> {
             match inner {
                 TypeExpr::Vec(vec_inner) => match vec_inner.as_ref() {
                     TypeExpr::Primitive(p) => format!("FfiOption_{}", self.primitive_c_type(*p)),
-                    TypeExpr::Record(id) => format!("FfiOption_{}", NamingConvention::class_name(id.as_str())),
+                    TypeExpr::Record(id) => {
+                        format!("FfiOption_{}", NamingConvention::class_name(id.as_str()))
+                    }
                     TypeExpr::String => "FfiOption_FfiString".to_string(),
                     TypeExpr::Enum(id) if is_data_enum => {
                         format!("FfiOption_{}", NamingConvention::class_name(id.as_str()))
@@ -1007,7 +1140,9 @@ impl<'a> JniLowerer<'a> {
             match inner {
                 TypeExpr::Primitive(p) => format!("FfiOption_{}", self.primitive_c_type(*p)),
                 TypeExpr::String => "FfiOption_FfiString".to_string(),
-                TypeExpr::Record(id) => format!("FfiOption_{}", NamingConvention::class_name(id.as_str())),
+                TypeExpr::Record(id) => {
+                    format!("FfiOption_{}", NamingConvention::class_name(id.as_str()))
+                }
                 TypeExpr::Enum(id) if is_data_enum => {
                     format!("FfiOption_{}", NamingConvention::class_name(id.as_str()))
                 }
@@ -1018,7 +1153,14 @@ impl<'a> JniLowerer<'a> {
     }
 
     fn primitive_is_large(&self, primitive: PrimitiveType) -> bool {
-        matches!(primitive, PrimitiveType::I64 | PrimitiveType::U64 | PrimitiveType::ISize | PrimitiveType::USize | PrimitiveType::F64)
+        matches!(
+            primitive,
+            PrimitiveType::I64
+                | PrimitiveType::U64
+                | PrimitiveType::ISize
+                | PrimitiveType::USize
+                | PrimitiveType::F64
+        )
     }
 
     fn is_data_enum(&self, ty: &TypeExpr) -> bool {
@@ -1045,7 +1187,7 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn data_enum_struct_size(&self, enum_id: &crate::ir::ids::EnumId) -> usize {
+    fn data_enum_struct_size(&self, enum_id: &EnumId) -> usize {
         self.abi
             .enums
             .iter()
@@ -1058,7 +1200,7 @@ impl<'a> JniLowerer<'a> {
         &self,
         callback: &CallbackTraitDef,
         abi_callback: &AbiCallbackInvocation,
-        _package_path: &str,
+        package_path: &str,
         jni_prefix: &str,
     ) -> JniCallbackTrait {
         let trait_name = NamingConvention::class_name(callback.id.as_str());
@@ -1068,6 +1210,7 @@ impl<'a> JniLowerer<'a> {
             .methods
             .iter()
             .filter(|method| !method.is_async)
+            .filter(|method| self.is_supported_callback_method(method))
             .map(|method| self.lower_sync_callback_method(method))
             .collect();
 
@@ -1075,6 +1218,7 @@ impl<'a> JniLowerer<'a> {
             .methods
             .iter()
             .filter(|method| method.is_async)
+            .filter(|method| self.is_supported_callback_method(method))
             .map(|method| self.lower_async_callback_method(method, jni_prefix))
             .collect();
 
@@ -1082,16 +1226,46 @@ impl<'a> JniLowerer<'a> {
             trait_name,
             vtable_type: abi_callback.vtable_type.as_str().to_string(),
             register_fn: abi_callback.register_fn.as_str().to_string(),
-            callbacks_class,
+            callbacks_class: format!("{}/{}", package_path, callbacks_class),
             sync_methods,
             async_methods,
         }
     }
 
-    fn lower_sync_callback_method(
-        &self,
-        method: &CallbackMethodDef,
-    ) -> JniCallbackMethod {
+    fn is_supported_callback_method(&self, method: &CallbackMethodDef) -> bool {
+        let supported_return = match &method.returns {
+            ReturnDef::Void => true,
+            ReturnDef::Value(TypeExpr::Void) => true,
+            ReturnDef::Value(TypeExpr::Primitive(_)) => true,
+            ReturnDef::Result { ok, .. } => {
+                matches!(ok, TypeExpr::Void | TypeExpr::Primitive(_))
+            }
+            _ => false,
+        };
+
+        let supported_params = method
+            .params
+            .iter()
+            .all(|param| self.is_supported_callback_param(&param.type_expr));
+
+        supported_return && supported_params
+    }
+
+    fn is_supported_callback_param(&self, ty: &TypeExpr) -> bool {
+        matches!(
+            ty,
+            TypeExpr::Primitive(_)
+                | TypeExpr::String
+                | TypeExpr::Bytes
+                | TypeExpr::Record(_)
+                | TypeExpr::Enum(_)
+                | TypeExpr::Vec(_)
+                | TypeExpr::Option(_)
+                | TypeExpr::Result { .. }
+        )
+    }
+
+    fn lower_sync_callback_method(&self, method: &CallbackMethodDef) -> JniCallbackMethod {
         let return_type = self.callback_return_type(&method.returns);
         let jni_return_type = self.jni_call_return_type(return_type);
         let jni_call_type = self.jni_call_method_suffix(return_type);
@@ -1177,18 +1351,21 @@ impl<'a> JniLowerer<'a> {
             jni_args,
             has_return,
             return_c_type,
-            invoker_jni_name: format!("Java_{}_Native_invokeAsyncCallback{}", jni_prefix, invoker_suffix),
+            invoker_jni_name: format!(
+                "Java_{}_Native_invokeAsyncCallback{}",
+                jni_prefix, invoker_suffix
+            ),
             invoker_native_name: format!("invokeAsyncCallback{}", invoker_suffix),
         }
     }
 
-    fn build_callback_jni_signature(
-        &self,
-        params: &[ParamDef],
-        returns: &ReturnDef,
-    ) -> String {
+    fn build_callback_jni_signature(&self, params: &[ParamDef], returns: &ReturnDef) -> String {
         let params_sig = std::iter::once("J".to_string())
-            .chain(params.iter().map(|param| self.type_expr_jni_signature(&param.type_expr)))
+            .chain(
+                params
+                    .iter()
+                    .map(|param| self.type_expr_jni_signature(&param.type_expr)),
+            )
             .collect::<Vec<_>>()
             .join("");
 
@@ -1203,7 +1380,11 @@ impl<'a> JniLowerer<'a> {
 
     fn build_async_callback_jni_signature(&self, params: &[ParamDef]) -> String {
         let params_sig = std::iter::once("J".to_string())
-            .chain(params.iter().map(|param| self.type_expr_jni_signature(&param.type_expr)))
+            .chain(
+                params
+                    .iter()
+                    .map(|param| self.type_expr_jni_signature(&param.type_expr)),
+            )
             .chain(["J".to_string(), "J".to_string()])
             .collect::<Vec<_>>()
             .join("");
@@ -1426,7 +1607,11 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn lower_callback_direct_param(&self, param_name: &str, abi_type: &AbiType) -> LoweredCallbackParam {
+    fn lower_callback_direct_param(
+        &self,
+        param_name: &str,
+        abi_type: &AbiType,
+    ) -> LoweredCallbackParam {
         let c_type = self.c_return_type_for_abi(abi_type);
         let jni_arg = match abi_type {
             AbiType::Bool => format!("{} != 0", param_name),
@@ -1434,35 +1619,60 @@ impl<'a> JniLowerer<'a> {
         };
 
         LoweredCallbackParam {
-            c_params: vec![JniCallbackCParam { name: param_name.to_string(), c_type }],
+            c_params: vec![JniCallbackCParam {
+                name: param_name.to_string(),
+                c_type,
+            }],
             setup_lines: Vec::new(),
             jni_arg,
         }
     }
 
-    fn lower_callback_encoded_param(&self, param_name: &str, is_async: bool) -> LoweredCallbackParam {
+    fn lower_callback_encoded_param(
+        &self,
+        param_name: &str,
+        is_async: bool,
+    ) -> LoweredCallbackParam {
         let ptr_name = format!("{}_ptr", param_name);
         let len_name = format!("{}_len", param_name);
         let buf_name = format!("buf_{}", param_name);
 
         let setup_lines = if is_async {
             vec![
-                format!("if ({ptr_name} == NULL) {{ if (attached) (*g_jvm)->DetachCurrentThread(g_jvm); return; }}"),
-                format!("jobject {buf_name} = (*env)->NewDirectByteBuffer(env, (void*){ptr_name}, (jlong){len_name});"),
-                format!("if ({buf_name} == NULL) {{ if (attached) (*g_jvm)->DetachCurrentThread(g_jvm); return; }}"),
+                format!(
+                    "if ({ptr_name} == NULL) {{ if (attached) (*g_jvm)->DetachCurrentThread(g_jvm); return; }}"
+                ),
+                format!(
+                    "jobject {buf_name} = (*env)->NewDirectByteBuffer(env, (void*){ptr_name}, (jlong){len_name});"
+                ),
+                format!(
+                    "if ({buf_name} == NULL) {{ if (attached) (*g_jvm)->DetachCurrentThread(g_jvm); return; }}"
+                ),
             ]
         } else {
             vec![
-                format!("if ({ptr_name} == NULL) {{ status->code = 1; if (attached) (*g_jvm)->DetachCurrentThread(g_jvm); return; }}"),
-                format!("jobject {buf_name} = (*env)->NewDirectByteBuffer(env, (void*){ptr_name}, (jlong){len_name});"),
-                format!("if ({buf_name} == NULL) {{ status->code = 1; if (attached) (*g_jvm)->DetachCurrentThread(g_jvm); return; }}"),
+                format!(
+                    "if ({ptr_name} == NULL) {{ status->code = 1; if (attached) (*g_jvm)->DetachCurrentThread(g_jvm); return; }}"
+                ),
+                format!(
+                    "jobject {buf_name} = (*env)->NewDirectByteBuffer(env, (void*){ptr_name}, (jlong){len_name});"
+                ),
+                format!(
+                    "if ({buf_name} == NULL) {{ status->code = 1; if (attached) (*g_jvm)->DetachCurrentThread(g_jvm); return; }}"
+                ),
             ]
         };
 
         LoweredCallbackParam {
             c_params: vec![
-                JniCallbackCParam { name: ptr_name, c_type: "const uint8_t*".to_string() },
-                JniCallbackCParam { name: len_name, c_type: "uintptr_t".to_string() },
+                JniCallbackCParam {
+                    name: ptr_name,
+                    c_type: "const uint8_t*".to_string(),
+                },
+                JniCallbackCParam {
+                    name: len_name,
+                    c_type: "uintptr_t".to_string(),
+                },
             ],
             setup_lines,
             jni_arg: buf_name,
@@ -1533,7 +1743,11 @@ impl<'a> JniLowerer<'a> {
 
         JniAsyncCallbackInvoker {
             suffix: suffix.clone(),
-            jni_fn_name: format!("Java_{}_Native_invokeAsyncCallback{}", self.jni_prefix(), suffix),
+            jni_fn_name: format!(
+                "Java_{}_Native_invokeAsyncCallback{}",
+                self.jni_prefix(),
+                suffix
+            ),
             c_result_type,
             jni_result_type,
             has_result,
@@ -1598,16 +1812,25 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn collect_closure_trampolines(&self, package_path: &str) -> Vec<JniClosureTrampoline> {
+    fn collect_closure_trampolines(
+        &self,
+        package_path: &str,
+        used_callbacks: &HashSet<CallbackId>,
+    ) -> Vec<JniClosureTrampoline> {
         self.contract
             .catalog
             .all_callbacks()
             .filter(|callback| matches!(callback.kind, CallbackKind::Closure))
+            .filter(|callback| used_callbacks.contains(&callback.id))
             .map(|callback| self.lower_closure_trampoline(callback, package_path))
             .collect()
     }
 
-    fn lower_closure_trampoline(&self, callback: &CallbackTraitDef, package_path: &str) -> JniClosureTrampoline {
+    fn lower_closure_trampoline(
+        &self,
+        callback: &CallbackTraitDef,
+        _package_path: &str,
+    ) -> JniClosureTrampoline {
         let signature_id = callback
             .id
             .as_str()
@@ -1615,8 +1838,13 @@ impl<'a> JniLowerer<'a> {
             .unwrap_or(callback.id.as_str())
             .to_string();
 
-        let method = callback.methods.iter().find(|method| method.id.as_str() == "call");
-        let params = method.map(|method| method.params.as_slice()).unwrap_or_default();
+        let method = callback
+            .methods
+            .iter()
+            .find(|method| method.id.as_str() == "call");
+        let params = method
+            .map(|method| method.params.as_slice())
+            .unwrap_or_default();
 
         let record_params = params
             .iter()
@@ -1644,18 +1872,34 @@ impl<'a> JniLowerer<'a> {
             TypeExpr::Record(id) => {
                 let c_type = NamingConvention::class_name(id.as_str());
                 let size = self.record_struct_size(id).to_string();
-                Some(JniClosureRecordParam { index, c_type, size })
+                Some(JniClosureRecordParam {
+                    index,
+                    c_type,
+                    size,
+                })
             }
             _ => None,
         }
     }
 
     fn closure_c_params(&self, params: &[ParamDef]) -> String {
-        params
+        let items = params
             .iter()
-            .map(|param| format!(", const uint8_t* p{}_ptr, uintptr_t p{}_len", param.name.as_str(), param.name.as_str()))
-            .collect::<Vec<_>>()
-            .join("")
+            .enumerate()
+            .map(|(index, param)| match param.type_expr {
+                TypeExpr::Primitive(p) => format!("{} p{}", self.primitive_c_return_type(p), index),
+                TypeExpr::Record(_) | TypeExpr::String => {
+                    format!("const uint8_t* p{}_ptr, uintptr_t p{}_len", index, index)
+                }
+                _ => format!("void* p{}", index),
+            })
+            .collect::<Vec<_>>();
+
+        if items.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", items.join(", "))
+        }
     }
 
     fn closure_jni_signature(&self, params: &[ParamDef]) -> String {
@@ -1663,7 +1907,9 @@ impl<'a> JniLowerer<'a> {
             .iter()
             .map(|param| match &param.type_expr {
                 TypeExpr::Primitive(p) => self.primitive_signature(*p),
-                _ => "Ljava/nio/ByteBuffer;".to_string(),
+                TypeExpr::String => "Ljava/lang/String;".to_string(),
+                TypeExpr::Record(_) => "Ljava/nio/ByteBuffer;".to_string(),
+                _ => "Ljava/lang/Object;".to_string(),
             })
             .collect::<Vec<_>>()
             .join("");
@@ -1676,11 +1922,25 @@ impl<'a> JniLowerer<'a> {
             .iter()
             .enumerate()
             .map(|(index, param)| match &param.type_expr {
-                TypeExpr::Primitive(_) => format!("p{}", index),
-                _ => format!("buf_p{}", index),
+                TypeExpr::Primitive(p) => format!("({})p{}", self.primitive_jni_cast(*p), index),
+                TypeExpr::Record(_) => format!("buf_p{}", index),
+                _ => format!("(jlong)p{}", index),
             })
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    fn primitive_jni_cast(&self, primitive: PrimitiveType) -> &'static str {
+        match primitive {
+            PrimitiveType::Bool => "jboolean",
+            PrimitiveType::I8 | PrimitiveType::U8 => "jbyte",
+            PrimitiveType::I16 | PrimitiveType::U16 => "jshort",
+            PrimitiveType::I32 | PrimitiveType::U32 => "jint",
+            PrimitiveType::I64 | PrimitiveType::U64 => "jlong",
+            PrimitiveType::F32 => "jfloat",
+            PrimitiveType::F64 => "jdouble",
+            PrimitiveType::ISize | PrimitiveType::USize => "jlong",
+        }
     }
 }
 
@@ -1692,7 +1952,7 @@ struct RecordParamInfo {
 
 #[derive(Clone)]
 struct DataEnumParamInfo {
-    id: crate::ir::ids::EnumId,
+    id: EnumId,
 }
 
 #[derive(Clone)]

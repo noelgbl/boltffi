@@ -1,8 +1,8 @@
-mod plan;
 mod emit;
-mod templates;
 mod lower;
+mod plan;
+mod templates;
 
-pub use plan::*;
 pub use emit::JniEmitter;
 pub use lower::JniLowerer;
+pub use plan::*;

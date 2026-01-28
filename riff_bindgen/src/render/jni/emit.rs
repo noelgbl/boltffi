@@ -1,3 +1,5 @@
+use askama::Template;
+
 use super::plan::JniModule;
 use super::templates::JniGlueTemplate;
 

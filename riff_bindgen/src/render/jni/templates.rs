@@ -8,7 +8,7 @@ use super::plan::{
 };
 
 #[derive(Template)]
-#[template(path = "render/jni/templates/jni_glue.txt", escape = "none")]
+#[template(path = "jni_glue.txt", escape = "none")]
 pub struct JniGlueTemplate<'a> {
     pub prefix: &'a str,
     pub jni_prefix: &'a str,
@@ -48,7 +48,7 @@ impl<'a> JniGlueTemplate<'a> {
 }
 
 #[derive(Template)]
-#[template(path = "render/jni/templates/jni_wire_function.txt", escape = "none")]
+#[template(path = "jni_wire_function.txt", escape = "none")]
 pub struct JniWireFunctionTemplate<'a> {
     pub ffi_name: &'a str,
     pub jni_name: &'a str,
@@ -79,7 +79,7 @@ impl Display for JniWireFunction {
 }
 
 #[derive(Template)]
-#[template(path = "render/jni/templates/jni_wire_method.txt", escape = "none")]
+#[template(path = "jni_wire_method.txt", escape = "none")]
 pub struct JniWireMethodTemplate<'a> {
     pub ffi_name: &'a str,
     pub jni_name: &'a str,
@@ -112,7 +112,7 @@ impl Display for JniWireMethod {
 }
 
 #[derive(Template)]
-#[template(path = "render/jni/templates/jni_wire_ctor.txt", escape = "none")]
+#[template(path = "jni_wire_ctor.txt", escape = "none")]
 pub struct JniWireCtorTemplate<'a> {
     pub ffi_name: &'a str,
     pub jni_name: &'a str,
@@ -137,5 +137,135 @@ impl Display for JniWireCtor {
             .render()
             .map_err(|_| fmt::Error)
             .and_then(|rendered| formatter.write_str(&rendered))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ir;
+    use crate::kotlin::JniGenerator;
+    use crate::model::{
+        CallbackTrait, Class, ClosureSignature, Constructor, ConstructorParam, Enumeration,
+        Function, Method, Module, Parameter, Primitive, Receiver, Record, RecordField, ReturnType,
+        TraitMethod, TraitMethodParam, Type, Variant,
+    };
+    use crate::render::jni::{JniEmitter, JniLowerer};
+
+    fn build_test_module() -> Module {
+        let point = Record::new("Point")
+            .with_field(RecordField::new("x", Type::Primitive(Primitive::F64)))
+            .with_field(RecordField::new("y", Type::Primitive(Primitive::F64)));
+
+        let message = Record::new("Message").with_field(RecordField::new("text", Type::String));
+
+        let color = Enumeration::new("Color")
+            .with_variant(Variant::new("red").with_discriminant(0))
+            .with_variant(Variant::new("green").with_discriminant(1))
+            .with_variant(Variant::new("blue").with_discriminant(2));
+
+        let shape = Enumeration::new("Shape").with_variant(
+            Variant::new("circle")
+                .with_field(RecordField::new("radius", Type::Primitive(Primitive::F64))),
+        );
+
+        let api_error = Enumeration::new("ApiError").as_error().with_variant(
+            Variant::new("failed")
+                .with_field(RecordField::new("code", Type::Primitive(Primitive::I32))),
+        );
+
+        let listener = CallbackTrait::new("Listener")
+            .with_method(
+                TraitMethod::new("on_value")
+                    .with_param(TraitMethodParam::new(
+                        "value",
+                        Type::Primitive(Primitive::I32),
+                    ))
+                    .with_return(ReturnType::Void),
+            )
+            .with_method(
+                TraitMethod::new("on_done")
+                    .with_param(TraitMethodParam::new(
+                        "status",
+                        Type::Primitive(Primitive::U32),
+                    ))
+                    .with_return(ReturnType::value(Type::String))
+                    .make_async(),
+            );
+
+        let engine = Class::new("Engine")
+            .with_constructor(
+                Constructor::new().with_param(ConstructorParam::new("name", Type::String)),
+            )
+            .with_method(
+                Method::new("ping", Receiver::Ref).with_output(Type::Primitive(Primitive::I32)),
+            )
+            .with_method(
+                Method::new("fetch", Receiver::Ref)
+                    .with_output(Type::String)
+                    .make_async(),
+            );
+
+        let closure = ClosureSignature::single_param(Type::Record("Point".to_string()));
+        let closure_function = Function::new("with_closure")
+            .with_param(Parameter::new("callback", Type::Closure(closure.clone())))
+            .with_return(ReturnType::Void);
+
+        Module::new("test")
+            .with_record(point)
+            .with_record(message)
+            .with_enum(color)
+            .with_enum(shape)
+            .with_enum(api_error)
+            .with_callback_trait(listener)
+            .with_class(engine)
+            .with_function(
+                Function::new("add")
+                    .with_param(Parameter::new("a", Type::Primitive(Primitive::I32)))
+                    .with_param(Parameter::new("b", Type::Primitive(Primitive::I32)))
+                    .with_output(Type::Primitive(Primitive::I32)),
+            )
+            .with_function(
+                Function::new("echo_point")
+                    .with_param(Parameter::new("point", Type::Record("Point".to_string())))
+                    .with_output(Type::Record("Point".to_string())),
+            )
+            .with_function(
+                Function::new("echo_color")
+                    .with_param(Parameter::new("color", Type::Enum("Color".to_string())))
+                    .with_output(Type::Enum("Color".to_string())),
+            )
+            .with_function(
+                Function::new("echo_shape")
+                    .with_param(Parameter::new("shape", Type::Enum("Shape".to_string())))
+                    .with_output(Type::Enum("Shape".to_string())),
+            )
+            .with_function(Function::new("fallible").with_return(ReturnType::fallible(
+                Type::Primitive(Primitive::I32),
+                Type::Enum("ApiError".to_string()),
+            )))
+            .with_function(closure_function)
+    }
+
+    #[test]
+    fn jni_ir_matches_legacy() {
+        let module = build_test_module();
+        let package = "com.example";
+        let class_name = "BenchRiff";
+
+        let legacy = JniGenerator::generate_with_class_name(&module, package, class_name);
+
+        let mut ir_module = module.clone();
+        let contract = ir::build_contract(&mut ir_module);
+        let abi_contract = ir::Lowerer::new(&contract).to_abi_contract();
+        let jni_module = JniLowerer::new(
+            &contract,
+            &abi_contract,
+            package.to_string(),
+            class_name.to_string(),
+        )
+        .lower();
+        let ir_code = JniEmitter::emit(&jni_module);
+
+        assert_eq!(legacy, ir_code);
     }
 }

@@ -66,6 +66,7 @@ pub struct JniAsyncFunction {
     pub ffi_cancel: String,
     pub ffi_free: String,
     pub jni_create_name: String,
+    pub jni_params: String,
     pub jni_poll_name: String,
     pub jni_complete_name: String,
     pub jni_cancel_name: String,
@@ -317,6 +318,63 @@ pub struct JniResultView {
 }
 
 impl JniResultView {
+    pub fn is_void(&self) -> bool {
+        matches!(self.ok, JniResultVariant::Void)
+    }
+
+    pub fn is_string(&self) -> bool {
+        matches!(self.ok, JniResultVariant::String)
+    }
+
+    pub fn is_primitive(&self) -> bool {
+        matches!(self.ok, JniResultVariant::Primitive { .. })
+    }
+
+    pub fn primitive_c_type(&self) -> String {
+        match &self.ok {
+            JniResultVariant::Primitive { c_type, .. } => c_type.clone(),
+            _ => String::new(),
+        }
+    }
+
+    pub fn is_record(&self) -> bool {
+        matches!(self.ok, JniResultVariant::Record { .. })
+    }
+
+    pub fn record_struct_size(&self) -> usize {
+        match &self.ok {
+            JniResultVariant::Record { struct_size, .. } => *struct_size,
+            _ => 0,
+        }
+    }
+
+    pub fn is_enum(&self) -> bool {
+        matches!(self.ok, JniResultVariant::Enum { .. })
+    }
+
+    pub fn is_data_enum(&self) -> bool {
+        matches!(self.ok, JniResultVariant::DataEnum { .. })
+    }
+
+    pub fn data_enum_struct_size(&self) -> usize {
+        match &self.ok {
+            JniResultVariant::DataEnum { struct_size, .. } => *struct_size,
+            _ => 0,
+        }
+    }
+
+    pub fn err_is_ffi_error(&self) -> bool {
+        matches!(self.err, JniResultVariant::String)
+    }
+
+    pub fn err_struct_size(&self) -> usize {
+        match &self.err {
+            JniResultVariant::DataEnum { struct_size, .. } => *struct_size,
+            JniResultVariant::String => 24,
+            _ => 0,
+        }
+    }
+
     pub fn is_vec_primitive(&self) -> bool {
         matches!(self.ok, JniResultVariant::VecPrimitive { .. })
     }
@@ -327,7 +385,7 @@ impl JniResultView {
 
     pub fn vec_primitive(&self) -> Option<&JniVecPrimitive> {
         match &self.ok {
-            JniResultVariant::VecPrimitive(info) => Some(info),
+            JniResultVariant::VecPrimitive { info, .. } => Some(info),
             _ => None,
         }
     }
@@ -370,7 +428,7 @@ impl JniResultView {
     pub fn ok_c_type(&self) -> String {
         match &self.ok {
             JniResultVariant::Primitive { c_type, .. } => c_type.clone(),
-            JniResultVariant::Record { c_type } => c_type.clone(),
+            JniResultVariant::Record { c_type, .. } => c_type.clone(),
             _ => String::new(),
         }
     }
@@ -378,7 +436,9 @@ impl JniResultView {
     pub fn ok_jni_type(&self) -> String {
         match &self.ok {
             JniResultVariant::Primitive { jni_type, .. } => jni_type.clone(),
-            JniResultVariant::Record { jni_type } => jni_type.clone(),
+            JniResultVariant::Record { jni_type, .. } => jni_type.clone(),
+            JniResultVariant::Enum { jni_type } => jni_type.clone(),
+            JniResultVariant::DataEnum { jni_type, .. } => jni_type.clone(),
             _ => String::new(),
         }
     }
@@ -387,11 +447,21 @@ impl JniResultView {
 #[derive(Clone)]
 pub enum JniReturnKind {
     Void,
-    Primitive { jni_type: String },
-    String { ffi_name: String },
-    Vec { len_fn: String, copy_fn: String },
+    Primitive {
+        jni_type: String,
+    },
+    String {
+        ffi_name: String,
+    },
+    Vec {
+        len_fn: String,
+        copy_fn: String,
+    },
     CStyleEnum,
-    DataEnum { enum_name: String, struct_size: usize },
+    DataEnum {
+        enum_name: String,
+        struct_size: usize,
+    },
     Option(JniOptionView),
     Result(JniResultView),
 }
@@ -429,11 +499,33 @@ impl JniReturnKind {
 #[derive(Clone)]
 pub enum JniResultVariant {
     Void,
-    Primitive { c_type: String, jni_type: String },
+    Primitive {
+        c_type: String,
+        jni_type: String,
+    },
     String,
-    Record { c_type: String, jni_type: String },
-    VecPrimitive { info: JniVecPrimitive },
-    VecRecord { len_fn: String, copy_fn: String, struct_size: usize },
+    Record {
+        c_type: String,
+        jni_type: String,
+        struct_size: usize,
+    },
+    Enum {
+        jni_type: String,
+    },
+    DataEnum {
+        jni_type: String,
+        struct_size: usize,
+    },
+    VecPrimitive {
+        info: JniVecPrimitive,
+        len_fn: String,
+        copy_fn: String,
+    },
+    VecRecord {
+        len_fn: String,
+        copy_fn: String,
+        struct_size: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -506,21 +598,27 @@ impl JniReturnAbi {
     pub fn jni_return_type(&self) -> String {
         match self {
             Self::Unit => "void".to_string(),
-            Self::Direct { jni_return_type, .. } => jni_return_type.clone(),
+            Self::Direct {
+                jni_return_type, ..
+            } => jni_return_type.clone(),
             Self::WireEncoded => "jobject".to_string(),
         }
     }
 
     pub fn jni_c_return_type(&self) -> String {
         match self {
-            Self::Direct { jni_c_return_type, .. } => jni_c_return_type.clone(),
+            Self::Direct {
+                jni_c_return_type, ..
+            } => jni_c_return_type.clone(),
             _ => String::new(),
         }
     }
 
     pub fn jni_result_cast(&self) -> String {
         match self {
-            Self::Direct { jni_result_cast, .. } => jni_result_cast.clone(),
+            Self::Direct {
+                jni_result_cast, ..
+            } => jni_result_cast.clone(),
             _ => String::new(),
         }
     }

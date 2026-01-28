@@ -1194,7 +1194,11 @@ JNIEXPORT {{ func.jni_return }} JNICALL {{ func.jni_name }}(JNIEnv *env, jclass 
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
 {%- endif %}
 {%- endfor %}
+{%- if func.jni_return == "jboolean" %}
+    return (jboolean)_result;
+{%- else %}
     return _result;
+{%- endif %}
 {%- endif %}
 }
 {%- endif %}
