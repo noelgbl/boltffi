@@ -340,11 +340,17 @@ impl<'a> KotlinLowerer<'a> {
             .iter()
             .map(|variant| self.lower_enum_variant(variant))
             .collect::<Vec<_>>();
+        let kind = if enumeration.is_error {
+            KotlinEnumKind::Error
+        } else if abi_enum.is_c_style {
+            KotlinEnumKind::CStyle
+        } else {
+            KotlinEnumKind::Sealed
+        };
         KotlinEnum {
             class_name,
             variants,
-            is_c_style: abi_enum.is_c_style,
-            is_error: enumeration.is_error,
+            kind,
         }
     }
 
@@ -464,8 +470,7 @@ impl<'a> KotlinLowerer<'a> {
         KotlinRecordField {
             name: kotlin_name.clone(),
             kotlin_type: self.kotlin_type(&field.type_expr),
-            has_default: self.has_default_value(&field.type_expr),
-            default_expr: self.default_expr(&field.type_expr),
+            default_value: self.default_expr(&field.type_expr),
             read_expr: emit::emit_read_value(&decode_seq, "offset", "offset"),
             local_name: local_name.clone(),
             wire_decode_inline: emit::emit_inline_decode(&decode_seq, &local_name, "pos"),
@@ -568,8 +573,10 @@ impl<'a> KotlinLowerer<'a> {
                         kotlin_type: self.closure_param_type(&param.type_expr),
                     })
                     .collect(),
-                return_type: self.kotlin_type_from_return_def(&method.returns),
-                is_void_return: matches!(method.returns, ReturnDef::Void),
+                return_type: match &method.returns {
+                    ReturnDef::Void => None,
+                    _ => Some(self.kotlin_type_from_return_def(&method.returns)),
+                },
             })
             .collect()
     }
@@ -609,7 +616,6 @@ impl<'a> KotlinLowerer<'a> {
             err_type: self.error_type_name(&func.returns),
             ffi_name: call.symbol.as_str().to_string(),
             return_abi,
-            is_async: matches!(call.mode, CallMode::Async(_)),
             async_call,
             decode_expr,
             is_blittable_return,
@@ -637,7 +643,6 @@ impl<'a> KotlinLowerer<'a> {
                 self.lower_stream(stream, abi_stream, &class_name)
             })
             .collect::<Vec<_>>();
-        let has_factory_ctors = constructors.iter().any(|c| c.is_factory);
         KotlinClass {
             class_name,
             doc: class.doc.clone(),
@@ -650,7 +655,6 @@ impl<'a> KotlinLowerer<'a> {
                 self.options.factory_style,
                 FactoryStyle::CompanionMethods
             ),
-            has_factory_ctors,
         }
     }
 
@@ -1034,23 +1038,22 @@ impl<'a> KotlinLowerer<'a> {
     }
 
     fn async_callback_invoker(&self, returns: &ReturnDef) -> KotlinAsyncCallbackInvoker {
-        let (jni_type, has_result) = match returns {
-            ReturnDef::Value(TypeExpr::Primitive(p)) => (self.primitive_jni_type(*p), true),
-            ReturnDef::Value(TypeExpr::String) => ("String".to_string(), true),
-            ReturnDef::Value(TypeExpr::Enum(_)) => ("Int".to_string(), true),
+        let result_jni_type = match returns {
+            ReturnDef::Value(TypeExpr::Primitive(p)) => Some(self.primitive_jni_type(*p)),
+            ReturnDef::Value(TypeExpr::String) => Some("String".to_string()),
+            ReturnDef::Value(TypeExpr::Enum(_)) => Some("Int".to_string()),
             ReturnDef::Value(TypeExpr::Handle(_)) | ReturnDef::Value(TypeExpr::Callback(_)) => {
-                ("Long".to_string(), true)
+                Some("Long".to_string())
             }
             ReturnDef::Value(TypeExpr::Record(_))
             | ReturnDef::Value(TypeExpr::Vec(_))
             | ReturnDef::Value(TypeExpr::Option(_))
-            | ReturnDef::Value(TypeExpr::Bytes) => ("ByteBuffer".to_string(), true),
-            _ => ("".to_string(), false),
+            | ReturnDef::Value(TypeExpr::Bytes) => Some("ByteBuffer".to_string()),
+            _ => None,
         };
         KotlinAsyncCallbackInvoker {
             name: format!("invokeAsyncCallback{}", self.invoker_suffix(returns)),
-            jni_type,
-            has_result,
+            result_jni_type,
         }
     }
 
@@ -1274,6 +1277,16 @@ impl<'a> KotlinLowerer<'a> {
             },
             CallMode::Sync => String::new(),
         };
+        let async_ffi = match &call.mode {
+            CallMode::Async(async_call) => Some(KotlinNativeAsyncFfi {
+                ffi_poll: async_call.poll.as_str().to_string(),
+                ffi_complete: async_call.complete.as_str().to_string(),
+                ffi_cancel: async_call.cancel.as_str().to_string(),
+                ffi_free: async_call.free.as_str().to_string(),
+                complete_return_jni_type,
+            }),
+            CallMode::Sync => None,
+        };
         KotlinNativeFunction {
             ffi_name: call.symbol.as_str().to_string(),
             params: {
@@ -1288,24 +1301,7 @@ impl<'a> KotlinLowerer<'a> {
                     .collect()
             },
             return_jni_type,
-            is_async: matches!(call.mode, CallMode::Async(_)),
-            ffi_poll: match &call.mode {
-                CallMode::Async(async_call) => async_call.poll.as_str().to_string(),
-                CallMode::Sync => String::new(),
-            },
-            ffi_complete: match &call.mode {
-                CallMode::Async(async_call) => async_call.complete.as_str().to_string(),
-                CallMode::Sync => String::new(),
-            },
-            ffi_cancel: match &call.mode {
-                CallMode::Async(async_call) => async_call.cancel.as_str().to_string(),
-                CallMode::Sync => String::new(),
-            },
-            ffi_free: match &call.mode {
-                CallMode::Async(async_call) => async_call.free.as_str().to_string(),
-                CallMode::Sync => String::new(),
-            },
-            complete_return_jni_type,
+            async_ffi,
         }
     }
 
@@ -2059,16 +2055,9 @@ impl<'a> KotlinLowerer<'a> {
         next_offset.saturating_sub(current.offset + current.size)
     }
 
-    fn has_default_value(&self, ty: &TypeExpr) -> bool {
-        matches!(
-            ty,
-            TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Option(_)
-        )
-    }
-
-    fn default_expr(&self, ty: &TypeExpr) -> String {
+    fn default_expr(&self, ty: &TypeExpr) -> Option<String> {
         match ty {
-            TypeExpr::Primitive(p) => match p {
+            TypeExpr::Primitive(p) => Some(match p {
                 PrimitiveType::Bool => "false".to_string(),
                 PrimitiveType::U8 => "0u".to_string(),
                 PrimitiveType::U16 => "0u".to_string(),
@@ -2080,10 +2069,10 @@ impl<'a> KotlinLowerer<'a> {
                 PrimitiveType::I64 | PrimitiveType::ISize => "0".to_string(),
                 PrimitiveType::F32 => "0f".to_string(),
                 PrimitiveType::F64 => "0.0".to_string(),
-            },
-            TypeExpr::String => "\"\"".to_string(),
-            TypeExpr::Option(_) => "null".to_string(),
-            _ => String::new(),
+            }),
+            TypeExpr::String => Some("\"\"".to_string()),
+            TypeExpr::Option(_) => Some("null".to_string()),
+            _ => None,
         }
     }
 

@@ -161,15 +161,24 @@ impl JniCallbackMethod {
     }
 
     pub fn jni_return_type(&self) -> &str {
-        self.return_info.as_ref().map(|r| r.jni_type.as_str()).unwrap_or("")
+        self.return_info
+            .as_ref()
+            .map(|r| r.jni_type.as_str())
+            .unwrap_or("")
     }
 
     pub fn jni_call_type(&self) -> &str {
-        self.return_info.as_ref().map(|r| r.jni_call_type.as_str()).unwrap_or("")
+        self.return_info
+            .as_ref()
+            .map(|r| r.jni_call_type.as_str())
+            .unwrap_or("")
     }
 
     pub fn c_return_type(&self) -> &str {
-        self.return_info.as_ref().map(|r| r.c_type.as_str()).unwrap_or("")
+        self.return_info
+            .as_ref()
+            .map(|r| r.c_type.as_str())
+            .unwrap_or("")
     }
 }
 
@@ -291,11 +300,17 @@ impl JniAsyncCallbackInvoker {
     }
 
     pub fn c_result_type(&self) -> &str {
-        self.result_type.as_ref().map(|r| r.c_type.as_str()).unwrap_or("")
+        self.result_type
+            .as_ref()
+            .map(|r| r.c_type.as_str())
+            .unwrap_or("")
     }
 
     pub fn jni_result_type(&self) -> &str {
-        self.result_type.as_ref().map(|r| r.jni_type.as_str()).unwrap_or("")
+        self.result_type
+            .as_ref()
+            .map(|r| r.jni_type.as_str())
+            .unwrap_or("")
     }
 }
 

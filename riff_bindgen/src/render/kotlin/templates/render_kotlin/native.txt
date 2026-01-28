@@ -8,12 +8,12 @@ private object Native {
     @JvmStatic external fun {{ prefix }}_free_native_buffer(buffer: ByteBuffer)
     @JvmStatic external fun {{ prefix }}_last_error_message(): String
 {%- for function in functions %}
-{%- if function.is_async %}
+{%- if function.is_async() %}
     @JvmStatic external fun {{ function.ffi_name }}({% for param in function.params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): Long
-    @JvmStatic external fun {{ function.ffi_poll }}(future: Long, contHandle: Long)
-    @JvmStatic external fun {{ function.ffi_complete }}(future: Long): {{ function.complete_return_jni_type }}
-    @JvmStatic external fun {{ function.ffi_cancel }}(future: Long)
-    @JvmStatic external fun {{ function.ffi_free }}(future: Long)
+    @JvmStatic external fun {{ function.ffi_poll() }}(future: Long, contHandle: Long)
+    @JvmStatic external fun {{ function.ffi_complete() }}(future: Long): {{ function.complete_return_jni_type() }}
+    @JvmStatic external fun {{ function.ffi_cancel() }}(future: Long)
+    @JvmStatic external fun {{ function.ffi_free() }}(future: Long)
 {%- else %}
     @JvmStatic external fun {{ function.ffi_name }}({% for param in function.params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): {{ function.return_jni_type }}
 {%- endif %}
@@ -46,6 +46,6 @@ private object Native {
 {%- endfor %}
 {%- endfor %}
 {%- for invoker in async_callback_invokers %}
-    @JvmStatic external fun {{ invoker.name }}(callbackPtr: Long, callbackData: Long{% if invoker.has_result %}, result: {{ invoker.jni_type }}{% endif %})
+    @JvmStatic external fun {{ invoker.name }}(callbackPtr: Long, callbackData: Long{% if invoker.has_result() %}, result: {{ invoker.jni_type() }}{% endif %})
 {%- endfor %}
 }

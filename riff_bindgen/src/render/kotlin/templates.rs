@@ -207,7 +207,7 @@ impl KotlinEmitter {
         let mut declarations = Vec::new();
 
         module.enums.iter().for_each(|enumeration| {
-            let rendered = if enumeration.is_c_style && !enumeration.is_error {
+            let rendered = if enumeration.is_c_style() && !enumeration.is_error() {
                 CStyleEnumTemplate {
                     class_name: &enumeration.class_name,
                     variants: &enumeration.variants,
@@ -218,7 +218,7 @@ impl KotlinEmitter {
                 SealedEnumTemplate {
                     class_name: &enumeration.class_name,
                     variants: &enumeration.variants,
-                    is_error: enumeration.is_error,
+                    is_error: enumeration.is_error(),
                 }
                 .render()
                 .unwrap()
@@ -279,8 +279,8 @@ impl KotlinEmitter {
             let rendered = ClosureInterfaceTemplate {
                 interface_name: &closure.interface_name,
                 params: &closure.params,
-                return_type: &closure.return_type,
-                is_void_return: closure.is_void_return,
+                return_type: closure.return_type(),
+                is_void_return: closure.is_void_return(),
             }
             .render()
             .unwrap();
@@ -288,7 +288,7 @@ impl KotlinEmitter {
         });
 
         module.functions.iter().for_each(|function| {
-            let rendered = if function.is_async {
+            let rendered = if function.is_async() {
                 let async_call = function.async_call.as_ref().unwrap();
                 AsyncFunctionTemplate {
                     func_name: &function.func_name,
@@ -340,7 +340,7 @@ impl KotlinEmitter {
                 methods: &class.methods,
                 streams: &class.streams,
                 use_companion_methods: class.use_companion_methods,
-                has_factory_ctors: class.has_factory_ctors,
+                has_factory_ctors: class.has_factory_ctors(),
                 prefix: &class.prefix,
                 ffi_free: &class.ffi_free,
             }

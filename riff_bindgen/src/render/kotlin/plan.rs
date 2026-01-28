@@ -43,8 +43,24 @@ pub struct KotlinCustomType {
 pub struct KotlinEnum {
     pub class_name: String,
     pub variants: Vec<KotlinEnumVariant>,
-    pub is_c_style: bool,
-    pub is_error: bool,
+    pub kind: KotlinEnumKind,
+}
+
+#[derive(Clone, Copy)]
+pub enum KotlinEnumKind {
+    CStyle,
+    Sealed,
+    Error,
+}
+
+impl KotlinEnum {
+    pub fn is_c_style(&self) -> bool {
+        matches!(self.kind, KotlinEnumKind::CStyle)
+    }
+
+    pub fn is_error(&self) -> bool {
+        matches!(self.kind, KotlinEnumKind::Error)
+    }
 }
 
 #[derive(Clone)]
@@ -103,14 +119,23 @@ pub struct KotlinRecord {
 pub struct KotlinRecordField {
     pub name: String,
     pub kotlin_type: String,
-    pub has_default: bool,
-    pub default_expr: String,
+    pub default_value: Option<String>,
     pub read_expr: String,
     pub local_name: String,
     pub wire_decode_inline: String,
     pub wire_size_expr: String,
     pub wire_encode: String,
     pub padding_after: usize,
+}
+
+impl KotlinRecordField {
+    pub fn has_default(&self) -> bool {
+        self.default_value.is_some()
+    }
+
+    pub fn default_expr(&self) -> &str {
+        self.default_value.as_deref().unwrap_or("")
+    }
 }
 
 #[derive(Clone)]
@@ -150,8 +175,17 @@ pub struct KotlinRecordWriterField {
 pub struct KotlinClosureInterface {
     pub interface_name: String,
     pub params: Vec<KotlinSignatureParam>,
-    pub return_type: String,
-    pub is_void_return: bool,
+    pub return_type: Option<String>,
+}
+
+impl KotlinClosureInterface {
+    pub fn is_void_return(&self) -> bool {
+        self.return_type.is_none()
+    }
+
+    pub fn return_type(&self) -> &str {
+        self.return_type.as_deref().unwrap_or("Unit")
+    }
 }
 
 #[derive(Clone)]
@@ -166,10 +200,15 @@ pub struct KotlinFunction {
     pub err_type: String,
     pub ffi_name: String,
     pub return_abi: KotlinReturnAbi,
-    pub is_async: bool,
     pub async_call: Option<KotlinAsyncCall>,
     pub decode_expr: String,
     pub is_blittable_return: bool,
+}
+
+impl KotlinFunction {
+    pub fn is_async(&self) -> bool {
+        self.async_call.is_some()
+    }
 }
 
 #[derive(Clone)]
@@ -182,7 +221,12 @@ pub struct KotlinClass {
     pub methods: Vec<KotlinMethod>,
     pub streams: Vec<KotlinStream>,
     pub use_companion_methods: bool,
-    pub has_factory_ctors: bool,
+}
+
+impl KotlinClass {
+    pub fn has_factory_ctors(&self) -> bool {
+        self.constructors.iter().any(|c| c.is_factory)
+    }
 }
 
 #[derive(Clone)]
@@ -338,12 +382,57 @@ pub struct KotlinNativeFunction {
     pub ffi_name: String,
     pub params: Vec<KotlinNativeParam>,
     pub return_jni_type: String,
-    pub is_async: bool,
+    pub async_ffi: Option<KotlinNativeAsyncFfi>,
+}
+
+#[derive(Clone)]
+pub struct KotlinNativeAsyncFfi {
     pub ffi_poll: String,
     pub ffi_complete: String,
     pub ffi_cancel: String,
     pub ffi_free: String,
     pub complete_return_jni_type: String,
+}
+
+impl KotlinNativeFunction {
+    pub fn is_async(&self) -> bool {
+        self.async_ffi.is_some()
+    }
+
+    pub fn ffi_poll(&self) -> &str {
+        self.async_ffi
+            .as_ref()
+            .map(|a| a.ffi_poll.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn ffi_complete(&self) -> &str {
+        self.async_ffi
+            .as_ref()
+            .map(|a| a.ffi_complete.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn ffi_cancel(&self) -> &str {
+        self.async_ffi
+            .as_ref()
+            .map(|a| a.ffi_cancel.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn ffi_free(&self) -> &str {
+        self.async_ffi
+            .as_ref()
+            .map(|a| a.ffi_free.as_str())
+            .unwrap_or("")
+    }
+
+    pub fn complete_return_jni_type(&self) -> &str {
+        self.async_ffi
+            .as_ref()
+            .map(|a| a.complete_return_jni_type.as_str())
+            .unwrap_or("")
+    }
 }
 
 #[derive(Clone)]
@@ -407,8 +496,17 @@ pub struct KotlinNativeParam {
 #[derive(Clone)]
 pub struct KotlinAsyncCallbackInvoker {
     pub name: String,
-    pub jni_type: String,
-    pub has_result: bool,
+    pub result_jni_type: Option<String>,
+}
+
+impl KotlinAsyncCallbackInvoker {
+    pub fn has_result(&self) -> bool {
+        self.result_jni_type.is_some()
+    }
+
+    pub fn jni_type(&self) -> &str {
+        self.result_jni_type.as_deref().unwrap_or("")
+    }
 }
 
 #[derive(Clone)]

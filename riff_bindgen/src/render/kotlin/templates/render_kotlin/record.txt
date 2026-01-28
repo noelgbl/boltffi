@@ -10,7 +10,7 @@ object {{ class_name }} {
 {%- else %}
 data class {{ class_name }}(
 {%- for field in fields %}
-    val {{ field.name }}: {{ field.kotlin_type }}{% if field.has_default %} = {{ field.default_expr }}{% endif %}{% if !loop.last %},{% endif %}
+    val {{ field.name }}: {{ field.kotlin_type }}{% if field.has_default() %} = {{ field.default_expr() }}{% endif %}{% if !loop.last %},{% endif %}
 {%- endfor %}
 ) {
     companion object {
