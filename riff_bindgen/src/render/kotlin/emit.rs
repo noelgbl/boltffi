@@ -2,7 +2,7 @@ use crate::ir::codec::{EnumLayout, VecLayout};
 use crate::ir::ids::BuiltinId;
 use crate::ir::ops::{OffsetExpr, ReadOp, ReadSeq, SizeExpr, ValueExpr, WriteOp, WriteSeq};
 use crate::ir::types::{PrimitiveType, TypeExpr};
-use crate::kotlin::NamingConvention;
+use crate::render::kotlin::NamingConvention;
 
 pub fn render_value(expr: &ValueExpr) -> String {
     match expr {

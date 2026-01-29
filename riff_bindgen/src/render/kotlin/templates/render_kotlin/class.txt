@@ -223,7 +223,7 @@ class {{ class_name }} private constructor(internal val handle: Long) : AutoClos
 
 class {{ class_name }}{{ method_name_pascal }}Subscription(
     private val handle: SubscriptionHandle,
-    private val popBatchFn: (SubscriptionHandle, Long) -> ByteBuffer?,
+    private val popBatchFn: (SubscriptionHandle, Long) -> ByteArray?,
     private val waitFn: (SubscriptionHandle, Int) -> Int,
     private val unsubscribeFn: (SubscriptionHandle) -> Unit,
     private val freeFn: (SubscriptionHandle) -> Unit
@@ -238,21 +238,19 @@ class {{ class_name }}{{ method_name_pascal }}Subscription(
 
     fun popBatch(maxCount: Long = 16L): List<{{ stream.item_type }}> {
         if (handle == 0L) return emptyList()
-        val buf = popBatchFn(handle, maxCount) ?: return emptyList()
-        return useNativeBuffer(buf) { buffer ->
-            if (!buffer.hasRemaining()) return@useNativeBuffer emptyList()
-            val wire = WireBuffer.fromByteBuffer(buffer)
-            val count = wire.readU32(0).toInt()
-            val result = ArrayList<{{ stream.item_type }}>(count)
+        val bytes = popBatchFn(handle, maxCount) ?: return emptyList()
+        if (bytes.isEmpty()) return emptyList()
+        val wire = WireBuffer(bytes)
+        val count = wire.readU32(0).toInt()
+        val result = ArrayList<{{ stream.item_type }}>(count)
 {%- if stream.uses_offset() %}
-            var offset = 4
+        var offset = 4
 {%- endif %}
-            repeat(count) {
-                val item = {{ stream.item_decode_expr() }}
-                result.add(item)
-            }
-            result
+        repeat(count) {
+            val item = {{ stream.item_decode_expr() }}
+            result.add(item)
         }
+        return result
     }
 
     fun wait(timeout: Int): Int {

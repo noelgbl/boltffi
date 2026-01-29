@@ -279,7 +279,6 @@ pub struct KotlinStream {
     pub wait: String,
     pub unsubscribe: String,
     pub free: String,
-    pub free_buf: String,
 }
 
 impl KotlinStream {

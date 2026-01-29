@@ -1,9 +1,0 @@
-enum class {{ class_name }}(val value: Int) {
-{%- for variant in variants %}
-    {{ variant.name }}({{ variant.value }}){% if !loop.last %},{% else %};{% endif %}
-{%- endfor %}
-
-    companion object {
-        fun fromValue(value: Int): {{ class_name }} = entries.first { it.value == value }
-    }
-}

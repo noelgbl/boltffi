@@ -15,7 +15,7 @@ use crate::ir::ids::{CallbackId, EnumId, ParamName, RecordId};
 use crate::ir::ops::SizeExpr;
 use crate::ir::plan::AbiType;
 use crate::ir::types::{PrimitiveType, TypeExpr};
-use crate::kotlin::{NamingConvention, primitives};
+use crate::render::kotlin::{NamingConvention, primitives};
 
 use super::plan::{
     JniArrayReleaseMode, JniAsyncCallbackInvoker, JniAsyncCallbackMethod, JniAsyncCompleteKind,

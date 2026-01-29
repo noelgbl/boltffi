@@ -3,7 +3,6 @@
 pub mod build;
 pub mod cheader;
 pub mod ir;
-pub mod kotlin;
 pub mod model;
 pub mod render;
 pub mod scan;
@@ -15,7 +14,7 @@ pub use model::{
     Parameter, Primitive, Receiver, Record, RecordField, StreamMethod, StreamMode, Type, Variant,
 };
 
-pub use kotlin::{FactoryStyle, JniGenerator, Kotlin, KotlinApiStyle, KotlinOptions};
+pub use render::kotlin::{FactoryStyle, KotlinApiStyle, KotlinOptions};
 pub use render::{Renderer, swift::SwiftLowerer};
 pub use riff_ffi_rules::naming::ffi_prefix;
 pub use scan::{SourceScanner, scan_crate};
@@ -145,17 +144,6 @@ mod tests {
             "[Double]"
         );
         assert_eq!(TypeMapper::map_type(&Type::option(Type::String)), "String?");
-    }
-
-    #[test]
-    fn test_custom_type_codegen_kotlin_preamble() {
-        let module = create_test_module_with_custom_type();
-        let preamble = kotlin::Kotlin::render_preamble(&module);
-        assert!(preamble.contains("value class UtcDateTime"));
-        assert!(preamble.contains("val value: Long"));
-        assert!(preamble.contains("internal fun wireEncodedSize(): Int"));
-        assert!(preamble.contains("internal fun wireEncodeTo(wire: WireWriter)"));
-        assert!(preamble.contains("internal fun decode(wire: WireBuffer, offset: Int)"));
     }
 
     #[test]

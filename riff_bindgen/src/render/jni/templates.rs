@@ -143,7 +143,6 @@ impl Display for JniWireCtor {
 #[cfg(test)]
 mod tests {
     use crate::ir;
-    use crate::kotlin::JniGenerator;
     use crate::model::{
         CallbackTrait, Class, ClosureSignature, Constructor, ConstructorParam, Enumeration,
         Function, Method, Module, Parameter, Primitive, Receiver, Record, RecordField, ReturnType,

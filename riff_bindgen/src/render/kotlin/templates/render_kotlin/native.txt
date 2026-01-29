@@ -5,7 +5,6 @@ private object Native {
     }
 
     @JvmStatic external fun {{ prefix }}_free_string(ptr: Long)
-    @JvmStatic external fun {{ prefix }}_free_native_buffer(buffer: ByteBuffer)
     @JvmStatic external fun {{ prefix }}_last_error_message(): String
 {%- for function in functions %}
 {%- if function.is_async() %}
@@ -39,7 +38,7 @@ private object Native {
 {%- for stream in class.streams %}
     @JvmStatic external fun {{ stream.subscribe }}(handle: Long): Long
     @JvmStatic external fun {{ stream.poll }}(subscription: Long, contHandle: Long)
-    @JvmStatic external fun {{ stream.pop_batch }}(subscription: Long, maxCount: Long): ByteBuffer?
+    @JvmStatic external fun {{ stream.pop_batch }}(subscription: Long, maxCount: Long): ByteArray?
     @JvmStatic external fun {{ stream.wait }}(subscription: Long, timeout: Int): Int
     @JvmStatic external fun {{ stream.unsubscribe }}(subscription: Long)
     @JvmStatic external fun {{ stream.free }}(subscription: Long)

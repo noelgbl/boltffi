@@ -18,7 +18,7 @@ use crate::ir::ids::{
 use crate::ir::ops::{FieldReadOp, OffsetExpr, ReadOp, ReadSeq, SizeExpr, WriteOp, WriteSeq};
 use crate::ir::plan::AbiType;
 use crate::ir::types::{PrimitiveType, TypeExpr};
-use crate::kotlin::{
+use crate::render::kotlin::{
     FactoryStyle, KotlinApiStyle as KotlinInputApiStyle, KotlinOptions, NamingConvention,
 };
 use crate::render::kotlin::emit;
@@ -812,7 +812,7 @@ impl<'a> KotlinLowerer<'a> {
             wait: stream.wait.to_string(),
             unsubscribe: stream.unsubscribe.to_string(),
             free: stream.free.to_string(),
-            free_buf: format!("{}_free_native_buffer", naming::ffi_prefix()),
+
         }
     }
 
@@ -1160,8 +1160,8 @@ impl<'a> KotlinLowerer<'a> {
     fn callback_encoded_conversion(&self, decode_ops: &ReadSeq, name: &str) -> String {
         let decode_expr = emit::emit_read_value(decode_ops, "offset", "offset");
         format!(
-            "run {{ val wire = WireBuffer.fromByteBuffer({}); val offset = 0; {} }}",
-            name, decode_expr
+            "run {{ val bytes = ByteArray({}.remaining()); {}.get(bytes); val wire = WireBuffer(bytes); val offset = 0; {} }}",
+            name, name, decode_expr
         )
     }
 

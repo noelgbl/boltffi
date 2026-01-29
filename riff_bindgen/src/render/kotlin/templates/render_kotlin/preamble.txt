@@ -47,14 +47,7 @@ private inline fun <T> useWireBytes(bytes: ByteArray, block: (java.nio.ByteBuffe
     return block(java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN))
 }
 
-private inline fun <T> useNativeBuffer(buffer: ByteBuffer, block: (ByteBuffer) -> T): T {
-    buffer.order(ByteOrder.LITTLE_ENDIAN)
-    return try {
-        block(buffer)
-    } finally {
-        Native.{{ prefix }}_free_native_buffer(buffer)
-    }
-}
+
 
 private const val RIFF_FUTURE_POLL_READY: Byte = 0
 private const val RIFF_FUTURE_POLL_WAKE: Byte = 1
@@ -117,7 +110,7 @@ internal class RiffStreamContext(
     private val scope: CoroutineScope,
     private val subscription: SubscriptionHandle,
     private val batchSize: Long,
-    private val popBatch: (SubscriptionHandle, Long) -> ByteBuffer?,
+    private val popBatch: (SubscriptionHandle, Long) -> ByteArray?,
     private val poll: (SubscriptionHandle, Long) -> Unit,
     private val unsubscribe: (SubscriptionHandle) -> Unit,
     private val freeFn: (SubscriptionHandle) -> Unit,
@@ -173,14 +166,10 @@ internal class RiffStreamContext(
         try {
             if (!lifecycleTag.compareAndSet(0, 0)) return
             while (true) {
-                val buf = popBatch(subscription, batchSize) ?: break
-                val hasData = useNativeBuffer(buf) { buffer ->
-                    if (!buffer.hasRemaining()) return@useNativeBuffer false
-                    val wire = WireBuffer.fromByteBuffer(buffer)
-                    processItems(wire)
-                    true
-                }
-                if (!hasData) break
+                val bytes = popBatch(subscription, batchSize) ?: break
+                if (bytes.isEmpty()) break
+                val wire = WireBuffer(bytes)
+                processItems(wire)
             }
         } finally {
             callbackTag.compareAndSet(1, 0)
@@ -198,14 +187,6 @@ internal class RiffStreamContext(
 
 class WireBuffer(@JvmField val array: ByteArray, @JvmField val arrayBase: Int = 0) {
     @JvmField var pos: Int = 0
-
-    companion object {
-        fun fromByteBuffer(buf: java.nio.ByteBuffer): WireBuffer {
-            val bytes = ByteArray(buf.remaining())
-            buf.get(bytes)
-            return WireBuffer(bytes)
-        }
-    }
 
     fun readBool(offset: Int): Boolean = array[arrayBase + offset] != 0.toByte()
     fun readI8(offset: Int): Byte = array[arrayBase + offset]

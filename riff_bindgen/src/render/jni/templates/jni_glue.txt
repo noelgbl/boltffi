@@ -93,15 +93,6 @@ static void {{ trampoline.trampoline_name }}(void* user_data{{ trampoline.c_para
 {{ wire_fn }}
 {%- endfor %}
 
-JNIEXPORT void JNICALL Java_{{ jni_prefix }}_Native_{{ prefix }}_1free_1native_1buffer(JNIEnv *env, jclass cls, jobject buffer) {
-    void* ptr = (*env)->GetDirectBufferAddress(env, buffer);
-    jlong len = (*env)->GetDirectBufferCapacity(env, buffer);
-    if (ptr != NULL) {
-        FfiBuf_u8 buf = { (uint8_t*)ptr, (size_t)len, (size_t)len };
-        {{ prefix }}_free_buf_u8(buf);
-    }
-}
-
 JNIEXPORT jstring JNICALL Java_{{ jni_prefix }}_Native_{{ prefix }}_1last_1error_1message(JNIEnv *env, jclass cls) {
     FfiString out = { 0 };
     FfiStatus status = {{ prefix }}_last_error_message(&out);
@@ -230,14 +221,17 @@ JNIEXPORT void JNICALL {{ stream.poll_jni }}(JNIEnv *env, jclass cls, jlong subs
     {{ stream.poll_ffi }}((SubscriptionHandle)subscription_handle, (uint64_t)contHandle, riff_jni_continuation_callback);
 }
 
-JNIEXPORT jobject JNICALL {{ stream.pop_batch_jni }}(JNIEnv *env, jclass cls, jlong subscription_handle, jlong max_count) {
+JNIEXPORT jbyteArray JNICALL {{ stream.pop_batch_jni }}(JNIEnv *env, jclass cls, jlong subscription_handle, jlong max_count) {
     if (subscription_handle == 0) return NULL;
     FfiBuf_u8 _buf = {{ stream.pop_batch_ffi }}((SubscriptionHandle)subscription_handle, (uintptr_t)max_count);
     if (_buf.ptr == NULL || _buf.len == 0) {
-        if (_buf.ptr != NULL) {{ prefix }}_free_buf_u8(_buf);
+        if (_buf.ptr != NULL) riff_free_buf(_buf.ptr, _buf.len);
         return NULL;
     }
-    return (*env)->NewDirectByteBuffer(env, (void*)_buf.ptr, (jlong)_buf.len);
+    jbyteArray _arr = (*env)->NewByteArray(env, (jint)_buf.len);
+    (*env)->SetByteArrayRegion(env, _arr, 0, (jint)_buf.len, (const jbyte*)_buf.ptr);
+    riff_free_buf(_buf.ptr, _buf.len);
+    return _arr;
 }
 
 JNIEXPORT jint JNICALL {{ stream.wait_jni }}(JNIEnv *env, jclass cls, jlong subscription_handle, jint timeout) {
