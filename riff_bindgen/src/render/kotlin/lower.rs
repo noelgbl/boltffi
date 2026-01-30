@@ -1047,7 +1047,8 @@ impl<'a> KotlinLowerer<'a> {
                 jni_type: "ByteBuffer".to_string(),
                 conversion: self.callback_encoded_conversion(decode_ops, &name),
             },
-            ParamRole::InString { .. }
+            ParamRole::SyntheticLen { .. }
+            | ParamRole::InString { .. }
             | ParamRole::InBuffer { .. }
             | ParamRole::InHandle { .. }
             | ParamRole::InCallback { .. }
@@ -1517,12 +1518,13 @@ impl<'a> KotlinLowerer<'a> {
                 role: JniParamRole::OutBuffer,
                 len_companion: Some(len_param.clone()),
             },
-            ParamRole::OutDirect | ParamRole::OutLen { .. } | ParamRole::StatusOut => {
-                JniParamMapping {
-                    role: JniParamRole::Hidden,
-                    len_companion: None,
-                }
-            }
+            ParamRole::SyntheticLen { .. }
+            | ParamRole::OutDirect
+            | ParamRole::OutLen { .. }
+            | ParamRole::StatusOut => JniParamMapping {
+                role: JniParamRole::Hidden,
+                len_companion: None,
+            },
         }
     }
 
@@ -1828,6 +1830,7 @@ impl<'a> KotlinLowerer<'a> {
                     encode_expr: emit::emit_write_expr(encode_ops),
                 }),
                 ParamRole::InDirect
+                | ParamRole::SyntheticLen { .. }
                 | ParamRole::InString { .. }
                 | ParamRole::InBuffer { .. }
                 | ParamRole::InHandle { .. }
@@ -2536,6 +2539,7 @@ impl<'a> KotlinLowerer<'a> {
                 ParamRole::InEncoded { decode_ops, .. }
                 | ParamRole::OutBuffer { decode_ops, .. } => Some(decode_ops),
                 ParamRole::InDirect
+                | ParamRole::SyntheticLen { .. }
                 | ParamRole::InString { .. }
                 | ParamRole::InBuffer { .. }
                 | ParamRole::InHandle { .. }
@@ -2577,6 +2581,7 @@ impl<'a> KotlinLowerer<'a> {
                     ParamRole::InEncoded { decode_ops, .. }
                     | ParamRole::OutBuffer { decode_ops, .. } => Some(decode_ops),
                     ParamRole::InDirect
+                    | ParamRole::SyntheticLen { .. }
                     | ParamRole::InString { .. }
                     | ParamRole::InBuffer { .. }
                     | ParamRole::InHandle { .. }

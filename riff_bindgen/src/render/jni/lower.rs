@@ -1626,7 +1626,18 @@ impl<'a> JniLowerer<'a> {
         let param_name = param.name.as_str();
         match param.role {
             ParamRole::InDirect => self.lower_callback_direct_param(param_name, &param.ffi_type),
-            _ => self.lower_callback_encoded_param(param_name, is_async),
+            ParamRole::InEncoded { .. } => self.lower_callback_encoded_param(param_name, is_async),
+            ParamRole::SyntheticLen { .. }
+            | ParamRole::InString { .. }
+            | ParamRole::InBuffer { .. }
+            | ParamRole::InHandle { .. }
+            | ParamRole::InCallback { .. }
+            | ParamRole::OutBuffer { .. }
+            | ParamRole::OutDirect
+            | ParamRole::OutLen { .. }
+            | ParamRole::StatusOut => {
+                panic!("unsupported JNI callback param role: {:?}", param.role)
+            }
         }
     }
 

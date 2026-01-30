@@ -181,6 +181,9 @@ pub enum ParamRole {
         len_param: ParamName,
         decode_ops: ReadSeq,
     },
+    SyntheticLen {
+        for_param: ParamName,
+    },
     OutLen {
         for_param: ParamName,
     },

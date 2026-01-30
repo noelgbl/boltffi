@@ -486,6 +486,21 @@ impl<'c> Lowerer<'c> {
     fn sync_return_and_error(&self, returns: &ReturnPlan) -> (ReturnTransport, ErrorTransport) {
         match returns {
             ReturnPlan::Value(v) => (self.return_transport_from_value(v), ErrorTransport::None),
+            // fallible constructors cant be wire-encoded becuase the ok side
+            // is a handle (opaque pointer) not a value. so we just return a
+            // nullable handle here and let null signal the error case
+            ReturnPlan::Fallible {
+                ok: ReturnValuePlan::Handle { class_id, .. },
+                err_codec,
+            } => (
+                ReturnTransport::Handle {
+                    class_id: class_id.clone(),
+                    nullable: true,
+                },
+                ErrorTransport::Encoded {
+                    decode_ops: self.expand_decode(err_codec),
+                },
+            ),
             ReturnPlan::Fallible { ok, err_codec } => {
                 let ok_codec = self.codec_from_return_value(ok);
                 let result_codec = CodecPlan::Result {
@@ -935,7 +950,9 @@ impl<'c> Lowerer<'c> {
                 AbiParam {
                     name: len_name,
                     ffi_type: AbiType::U64,
-                    role: ParamRole::InDirect,
+                    role: ParamRole::SyntheticLen {
+                        for_param: param.name.clone(),
+                    },
                 },
             ],
             ParamStrategy::String { .. } => vec![
@@ -949,7 +966,9 @@ impl<'c> Lowerer<'c> {
                 AbiParam {
                     name: len_name,
                     ffi_type: AbiType::U64,
-                    role: ParamRole::InDirect,
+                    role: ParamRole::SyntheticLen {
+                        for_param: param.name.clone(),
+                    },
                 },
             ],
             ParamStrategy::Encoded { codec, mutability } => {
@@ -976,7 +995,9 @@ impl<'c> Lowerer<'c> {
                     AbiParam {
                         name: len_name,
                         ffi_type: AbiType::U64,
-                        role: ParamRole::InDirect,
+                        role: ParamRole::SyntheticLen {
+                            for_param: param.name.clone(),
+                        },
                     },
                 ]
             }
@@ -1089,7 +1110,9 @@ impl<'c> Lowerer<'c> {
                 AbiParam {
                     name: len_name,
                     ffi_type: AbiType::U64,
-                    role: ParamRole::InDirect,
+                    role: ParamRole::SyntheticLen {
+                        for_param: param.name.clone(),
+                    },
                 },
             ],
         }
@@ -3038,5 +3061,122 @@ mod tests {
             }
             _ => panic!("expected Encoded"),
         }
+    }
+
+    #[test]
+    fn string_param_produces_synthetic_len() {
+        let contract = test_contract();
+        let lowerer = lowerer_for_contract(&contract);
+
+        let func = FunctionDef {
+            id: FunctionId::new("greet"),
+            params: vec![ParamDef {
+                name: ParamName::new("name"),
+                type_expr: TypeExpr::String,
+                passing: ParamPassing::Value,
+                doc: None,
+            }],
+            returns: ReturnDef::Void,
+            is_async: false,
+            doc: None,
+            deprecated: None,
+        };
+
+        let abi = lowerer.abi_call_for_function(&func);
+
+        assert_eq!(abi.params.len(), 2);
+        assert!(matches!(abi.params[0].role, ParamRole::InString { .. }));
+        assert_eq!(abi.params[0].name.as_str(), "name");
+        match &abi.params[1].role {
+            ParamRole::SyntheticLen { for_param } => {
+                assert_eq!(for_param.as_str(), "name");
+            }
+            other => panic!("expected SyntheticLen, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn encoded_param_produces_synthetic_len() {
+        let mut contract = test_contract();
+        let record_id = RecordId::new("Point");
+        contract.catalog.insert_record(RecordDef {
+            id: record_id.clone(),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("x"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("y"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let lowerer = lowerer_for_contract(&contract);
+
+        let func = FunctionDef {
+            id: FunctionId::new("move_to"),
+            params: vec![ParamDef {
+                name: ParamName::new("point"),
+                type_expr: TypeExpr::Record(record_id),
+                passing: ParamPassing::Value,
+                doc: None,
+            }],
+            returns: ReturnDef::Void,
+            is_async: false,
+            doc: None,
+            deprecated: None,
+        };
+
+        let abi = lowerer.abi_call_for_function(&func);
+
+        assert_eq!(abi.params.len(), 2);
+        assert!(matches!(abi.params[0].role, ParamRole::InEncoded { .. }));
+        assert_eq!(abi.params[0].name.as_str(), "point");
+        match &abi.params[1].role {
+            ParamRole::SyntheticLen { for_param } => {
+                assert_eq!(for_param.as_str(), "point");
+            }
+            other => panic!("expected SyntheticLen, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fallible_constructor_produces_nullable_handle_not_panic() {
+        let mut contract = test_contract();
+        let class_id = ClassId::new("Connection");
+        contract.catalog.insert_class(ClassDef {
+            id: class_id.clone(),
+            constructors: vec![ConstructorDef::Default {
+                params: vec![ParamDef {
+                    name: ParamName::new("url"),
+                    type_expr: TypeExpr::String,
+                    passing: ParamPassing::Value,
+                    doc: None,
+                }],
+                is_fallible: true,
+                doc: None,
+                deprecated: None,
+            }],
+            methods: vec![],
+            streams: vec![],
+            doc: None,
+            deprecated: None,
+        });
+
+        let lowerer = lowerer_for_contract(&contract);
+        let class = contract.catalog.resolve_class(&class_id).unwrap();
+        let abi = lowerer.abi_call_for_constructor(class, &class.constructors[0], 0);
+
+        assert!(matches!(
+            abi.return_,
+            ReturnTransport::Handle { nullable: true, .. }
+        ));
+        assert!(matches!(abi.error, ErrorTransport::Encoded { .. }));
     }
 }

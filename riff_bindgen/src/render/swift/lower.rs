@@ -520,7 +520,15 @@ impl<'a> SwiftLowerer<'a> {
                                 )
                             })
                             .map(|param| {
-                                let def = param_map.get(&param.name).expect("param def");
+                                let def = param_map.get(&param.name).unwrap_or_else(|| {
+                                    panic!(
+                                        "param def not found: callback={}, method={}, param={}, role={:?}",
+                                        plan.callback_id.as_str(),
+                                        abi_method.id.as_str(),
+                                        param.name.as_str(),
+                                        param.role,
+                                    )
+                                });
                                 self.lower_callback_param(def, param)
                             })
                             .collect();
@@ -568,7 +576,17 @@ impl<'a> SwiftLowerer<'a> {
                     )),
                 )
             }
-            _ => panic!("unsupported ABI param role for Swift callback"),
+            ParamRole::SyntheticLen { .. }
+            | ParamRole::InString { .. }
+            | ParamRole::InBuffer { .. }
+            | ParamRole::InHandle { .. }
+            | ParamRole::InCallback { .. }
+            | ParamRole::OutBuffer { .. }
+            | ParamRole::OutDirect
+            | ParamRole::OutLen { .. }
+            | ParamRole::StatusOut => {
+                panic!("unsupported ABI param role for Swift callback: {:?}", param.role)
+            }
         };
 
         SwiftCallbackParam {
@@ -708,7 +726,10 @@ impl<'a> SwiftLowerer<'a> {
                     },
                 )
             }
-            _ => panic!(
+            ParamRole::SyntheticLen { .. }
+            | ParamRole::OutDirect
+            | ParamRole::OutLen { .. }
+            | ParamRole::StatusOut => panic!(
                 "unsupported ABI param role for Swift param: {:?}",
                 abi_param.role
             ),
@@ -1139,7 +1160,15 @@ impl<'a> SwiftLowerer<'a> {
                     decode_expr: arg_name,
                 }
             }
-            _ => panic!(
+            ParamRole::SyntheticLen { .. }
+            | ParamRole::InString { .. }
+            | ParamRole::InBuffer { .. }
+            | ParamRole::InHandle { .. }
+            | ParamRole::InCallback { .. }
+            | ParamRole::OutBuffer { .. }
+            | ParamRole::OutDirect
+            | ParamRole::OutLen { .. }
+            | ParamRole::StatusOut => panic!(
                 "unsupported closure param role for {}",
                 param_def.name.as_str()
             ),
@@ -1328,9 +1357,10 @@ mod tests {
     use crate::ir::Lowerer as IrLowerer;
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
-        CStyleVariant, DataVariant, EnumDef, EnumRepr, FieldDef, RecordDef, VariantPayload,
+        CStyleVariant, CallbackKind, CallbackMethodDef, CallbackTraitDef, DataVariant, EnumDef,
+        EnumRepr, FieldDef, ParamDef, ParamPassing, RecordDef, ReturnDef, VariantPayload,
     };
-    use crate::ir::ids::{FieldName, VariantName};
+    use crate::ir::ids::{CallbackId, FieldName, MethodId, ParamName, VariantName};
     use crate::ir::types::{PrimitiveType, TypeExpr};
 
     fn empty_contract() -> FfiContract {
@@ -1734,5 +1764,35 @@ mod tests {
             .find(|r| r.class_name == "Outer")
             .unwrap();
         assert_eq!(outer.fields[0].swift_type, "Inner");
+    }
+
+    #[test]
+    fn callback_with_encoded_param_does_not_panic() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_callback(CallbackTraitDef {
+            id: CallbackId::new("Logger"),
+            methods: vec![CallbackMethodDef {
+                id: MethodId::new("log"),
+                params: vec![ParamDef {
+                    name: ParamName::new("message"),
+                    type_expr: TypeExpr::String,
+                    passing: ParamPassing::Value,
+                    doc: None,
+                }],
+                returns: ReturnDef::Void,
+                is_async: false,
+                doc: None,
+            }],
+            kind: CallbackKind::Trait,
+            doc: None,
+        });
+
+        let module = lower_contract(&contract);
+
+        assert_eq!(module.callbacks.len(), 1);
+        let cb = &module.callbacks[0];
+        assert_eq!(cb.protocol_name, "Logger");
+        assert_eq!(cb.methods.len(), 1);
+        assert_eq!(cb.methods[0].params.len(), 1);
     }
 }
