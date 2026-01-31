@@ -36,16 +36,12 @@ private var asyncHandlerVtable: AsyncHandlerVtable = {
 }()
 
 enum AsyncHandlerBridge {
-    private static var isRegistered = false
-
-    static func register() {
-        guard !isRegistered else { return }
+    private static let _register: Void = {
         riff_register_async_handler(&asyncHandlerVtable)
-        isRegistered = true
-    }
+    }()
 
     static func create(_ impl: AsyncHandler) -> RiffCallbackHandle {
-        register()
+        _ = _register
         let wrapper = AsyncHandlerWrapper(impl)
         let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
         return riff_create_async_handler(handle)

@@ -630,10 +630,14 @@ impl SwiftCallbackMethod {
         self.encoded_return_encode().map(|encode| {
             let size_expr = emit::emit_size_expr(&encode.size);
             let encode_expr = emit::emit_write_data(encode);
-            let discriminant = if self.throws() { "data.appendU8(0); " } else { "" };
+            let (capacity_prefix, discriminant) = if self.throws() {
+                ("1 + ", "data.appendU8(0); ")
+            } else {
+                ("", "")
+            };
             format!(
-                "let encoded = ({{ var data = Data(capacity: {}); {}{}; return data }})()",
-                size_expr, discriminant, encode_expr
+                "let encoded = ({{ var data = Data(capacity: {}{}); {}{}; return data }})()",
+                capacity_prefix, size_expr, discriminant, encode_expr
             )
         })
     }
@@ -651,7 +655,7 @@ impl SwiftCallbackMethod {
                 let size_expr = emit::emit_size_expr(&encode.size);
                 let encode_expr = emit::emit_write_data(encode);
                 Some(format!(
-                    "let encoded = ({{ var data = Data(capacity: {}); data.appendU8(1); {}; return data }})()",
+                    "let encoded = ({{ var data = Data(capacity: 1 + {}); data.appendU8(1); {}; return data }})()",
                     size_expr, encode_expr
                 ))
             }

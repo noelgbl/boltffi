@@ -98,16 +98,12 @@ private var {{ callback.vtable_var }}: {{ callback.vtable_type }} = {
 }()
 
 enum {{ callback.bridge_name }} {
-    private static var isRegistered = false
-
-    static func register() {
-        guard !isRegistered else { return }
+    private static let _register: Void = {
         {{ callback.register_fn }}(&{{ callback.vtable_var }})
-        isRegistered = true
-    }
+    }()
 
     static func create(_ impl: {{ callback.protocol_name }}) -> RiffCallbackHandle {
-        register()
+        _ = _register
         let wrapper = {{ callback.wrapper_class }}(impl)
         let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
         return {{ callback.create_fn }}(handle)

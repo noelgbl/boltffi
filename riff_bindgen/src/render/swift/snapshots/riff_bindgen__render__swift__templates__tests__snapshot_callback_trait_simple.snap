@@ -34,16 +34,12 @@ private var dataHandlerVtable: DataHandlerVtable = {
 }()
 
 enum DataHandlerBridge {
-    private static var isRegistered = false
-
-    static func register() {
-        guard !isRegistered else { return }
+    private static let _register: Void = {
         riff_register_data_handler(&dataHandlerVtable)
-        isRegistered = true
-    }
+    }()
 
     static func create(_ impl: DataHandler) -> RiffCallbackHandle {
-        register()
+        _ = _register
         let wrapper = DataHandlerWrapper(impl)
         let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
         return riff_create_data_handler(handle)

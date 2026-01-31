@@ -35,16 +35,12 @@ private var validatorVtable: ValidatorVtable = {
 }()
 
 enum ValidatorBridge {
-    private static var isRegistered = false
-
-    static func register() {
-        guard !isRegistered else { return }
+    private static let _register: Void = {
         riff_register_validator(&validatorVtable)
-        isRegistered = true
-    }
+    }()
 
     static func create(_ impl: Validator) -> RiffCallbackHandle {
-        register()
+        _ = _register
         let wrapper = ValidatorWrapper(impl)
         let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
         return riff_create_validator(handle)
