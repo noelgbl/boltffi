@@ -1,4 +1,6 @@
-{{ self::swift_doc_block(callback.doc, "") }}public protocol {{ callback.protocol_name }}: AnyObject {
+{{ self::swift_doc_block(callback.doc, "") }}/// - Note: Callback methods are invoked on a background thread, not the main thread.
+///   Dispatch to the main thread if updating UI.
+public protocol {{ callback.protocol_name }}: AnyObject {
 {%- for method in callback.methods %}
 {{ self::swift_doc_block(method.doc, "    ") }}    func {{ method.swift_name }}({% for param in method.params %}{{ param.label }}: {{ param.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.is_async %} async{% endif %}{% if method.throws() %} throws{% endif %}{% if let Some(ret) = method.return_type() %} -> {{ ret }}{% endif %}
 {%- endfor %}

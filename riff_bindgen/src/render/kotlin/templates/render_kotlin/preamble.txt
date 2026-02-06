@@ -39,6 +39,9 @@ class FfiException(val code: Int, message: String) : Exception(message)
 
 object RiffScope : CoroutineScope {
     override val coroutineContext = Dispatchers.Default + SupervisorJob()
+
+    fun launchOnMain(block: suspend CoroutineScope.() -> Unit): Job =
+        launch(Dispatchers.Main, block = block)
 }
 
 class RiffException(val errorBuffer: ByteBuffer) : Exception("Structured error") {
@@ -69,6 +72,8 @@ internal class RiffHandleMap<T: Any> {
     fun remove(handle: Long): T =
         map.remove(handle) ?: throw IllegalStateException("RiffHandleMap: invalid handle $handle")
 
+    fun tryRemove(handle: Long): T? = map.remove(handle)
+
     fun get(handle: Long): T =
         map[handle] ?: throw IllegalStateException("RiffHandleMap: invalid handle $handle")
 }
@@ -76,9 +81,15 @@ internal class RiffHandleMap<T: Any> {
 private val riffContinuationMap = RiffHandleMap<CancellableContinuation<Byte>>()
 
 internal fun riffFutureContinuationCallback(handle: Long, pollResult: Byte) {
+    val continuation = riffContinuationMap.tryRemove(handle)
+    if (continuation == null) {
+        android.util.Log.w("Riff", "riffFutureContinuationCallback: handle $handle not found (already completed or cancelled)")
+        return
+    }
     try {
-        riffContinuationMap.remove(handle).resume(pollResult)
+        continuation.resume(pollResult)
     } catch (e: Exception) {
+        android.util.Log.e("Riff", "riffFutureContinuationCallback: resume failed for handle $handle", e)
     }
 }
 

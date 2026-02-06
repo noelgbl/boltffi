@@ -41,7 +41,7 @@ object {{ callbacks_object }} {
 
     @JvmStatic
     fun {{ method.ffi_name }}(handle: Long{% for param in method.params %}, {{ param.name }}: {{ param.jni_type }}{% endfor %}){% match method.return_info %}{% when Some with (ret) %}: {{ ret.jni_type }}{% when None %}{% endmatch %} {
-        val impl = {{ handle_map_name }}.get(handle) ?: {% match method.return_info %}{% when Some with (ret) %}return {{ ret.default_value }}{% when None %}return{% endmatch %}
+        val impl = {{ handle_map_name }}.get(handle) ?: error("{{ handle_map_name }}: invalid handle $handle")
         {% match method.return_info %}{% when Some with (ret) %}return impl.{{ method.name }}({% for param in method.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}){{ ret.to_jni }}{% when None %}impl.{{ method.name }}({% for param in method.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}){% endmatch %}
     }
 {%- endfor %}
@@ -49,10 +49,7 @@ object {{ callbacks_object }} {
 
     @JvmStatic
     fun {{ method.ffi_name }}(handle: Long{% for param in method.params %}, {{ param.name }}: {{ param.jni_type }}{% endfor %}, callbackPtr: Long, callbackData: Long) {
-        val impl = {{ handle_map_name }}.get(handle) ?: run {
-            Native.{{ method.invoker_name }}(callbackPtr, callbackData{% match method.return_info %}{% when Some with (ret) %}, {{ ret.default_value }}{% when None %}{% endmatch %})
-            return
-        }
+        val impl = {{ handle_map_name }}.get(handle) ?: error("{{ handle_map_name }}: invalid handle $handle")
         RiffScope.launch {
             {% match method.return_info %}{% when Some with (ret) %}{% match ret.error_type %}{% when Some with (err_ty) %}val result: RiffResult<{{ ret.kotlin_type }}, {{ err_ty }}> = try { RiffResult.Ok(impl.{{ method.name }}({% for param in method.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})) } catch (e: {{ err_ty }}) { RiffResult.Err(e) }
             {% match ret.to_jni_result %}{% when Some with (result_encode) %}Native.{{ method.invoker_name }}(callbackPtr, callbackData, result{{ result_encode }}){% when None %}Native.{{ method.invoker_name }}(callbackPtr, callbackData, result{{ ret.to_jni }}){% endmatch %}{% when None %}val result = impl.{{ method.name }}({% for param in method.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})

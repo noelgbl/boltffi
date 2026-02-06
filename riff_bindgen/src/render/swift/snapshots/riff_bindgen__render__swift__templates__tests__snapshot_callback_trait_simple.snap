@@ -2,6 +2,8 @@
 source: riff_bindgen/src/render/swift/templates.rs
 expression: render_callback(&callback)
 ---
+/// - Note: Callback methods are invoked on a background thread, not the main thread.
+///   Dispatch to the main thread if updating UI.
 public protocol DataHandler: AnyObject {
     func onData(data: Data)
 }
