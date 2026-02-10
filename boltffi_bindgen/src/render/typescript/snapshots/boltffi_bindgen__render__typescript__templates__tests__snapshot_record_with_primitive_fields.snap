@@ -1,0 +1,20 @@
+---
+source: boltffi_bindgen/src/render/typescript/templates.rs
+expression: template.render().unwrap()
+---
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
+
+function decodePoint(reader: WireReader): Point {
+  return {
+    x: reader.readF64(),
+    y: reader.readF64(),
+  };
+}
+
+function encodePoint(writer: WireWriter, value: Point): void {
+  writer.writeF64(value.x);
+  writer.writeF64(value.y);
+}

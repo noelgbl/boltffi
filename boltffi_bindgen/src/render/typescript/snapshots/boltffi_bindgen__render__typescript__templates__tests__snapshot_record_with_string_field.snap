@@ -1,0 +1,26 @@
+---
+source: boltffi_bindgen/src/render/typescript/templates.rs
+expression: template.render().unwrap()
+---
+/**
+ * A user record
+ */
+export interface User {
+  readonly id: number;
+  /**
+   * The user's display name
+   */
+  readonly name: string;
+}
+
+function decodeUser(reader: WireReader): User {
+  return {
+    id: reader.readI32(),
+    name: reader.readString(),
+  };
+}
+
+function encodeUser(writer: WireWriter, value: User): void {
+  writer.writeI32(value.id);
+  writer.writeString(value.name);
+}

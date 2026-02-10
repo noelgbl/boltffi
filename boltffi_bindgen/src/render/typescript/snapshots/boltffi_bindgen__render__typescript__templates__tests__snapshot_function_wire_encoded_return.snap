@@ -1,0 +1,11 @@
+---
+source: boltffi_bindgen/src/render/typescript/templates.rs
+expression: template.render().unwrap()
+---
+export function getUsers(): User[] {
+  const bufPtr = _module.exports.boltffi_get_users();
+  const reader = _module.readerFromBuf(bufPtr);
+  const result = reader.readArray(() => decodeUser(reader));
+  _module.freeBuf(bufPtr);
+  return result;
+}

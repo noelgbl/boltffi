@@ -1,0 +1,13 @@
+---
+source: boltffi_bindgen/src/render/typescript/templates.rs
+expression: output
+---
+import { WireReader, WireWriter, BoltFFIModule, instantiateBoltFFI } from "@boltffi/runtime";
+
+const EXPECTED_ABI_VERSION = 1;
+
+let _module: BoltFFIModule;
+
+export default async function init(source: BufferSource | Response): Promise<void> {
+  _module = await instantiateBoltFFI(source, EXPECTED_ABI_VERSION);
+}

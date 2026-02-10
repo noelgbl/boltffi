@@ -1,0 +1,21 @@
+---
+source: boltffi_bindgen/src/render/typescript/templates.rs
+expression: template.render().unwrap()
+---
+export type Shape =
+  | { readonly tag: "Circle"; readonly radius: number }
+  | { readonly tag: "Rectangle"; readonly width: number; readonly height: number }
+  | { readonly tag: "Nothing" };
+
+function decodeShape(reader: WireReader): Shape {
+  const tag = reader.readI32();
+  switch (tag) {
+    case 0:
+      return { tag: "Circle", radius: reader.readF64() };
+    case 1:
+      return { tag: "Rectangle", width: reader.readF64(), height: reader.readF64() };
+    case 2:
+      return { tag: "Nothing" };
+    default: throw new Error(`Unknown Shape discriminant: ${tag}`);
+  }
+}

@@ -1,0 +1,9 @@
+import { WireReader, WireWriter, BoltFFIModule, instantiateBoltFFI } from "@boltffi/runtime";
+
+const EXPECTED_ABI_VERSION = {{ abi_version }};
+
+let _module: BoltFFIModule;
+
+export default async function init(source: BufferSource | Response): Promise<void> {
+  _module = await instantiateBoltFFI(source, EXPECTED_ABI_VERSION);
+}

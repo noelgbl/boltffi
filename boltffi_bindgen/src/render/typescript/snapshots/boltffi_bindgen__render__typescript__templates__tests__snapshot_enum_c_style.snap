@@ -1,0 +1,24 @@
+---
+source: boltffi_bindgen/src/render/typescript/templates.rs
+expression: template.render().unwrap()
+---
+/**
+ * A color enum
+ */
+export enum Color {
+  Red = 0,
+  Green = 1,
+  /**
+   * The blue channel
+   */
+  Blue = 2,
+}
+
+function decodeColor(value: number): Color {
+  switch (value) {
+    case 0: return Color.Red;
+    case 1: return Color.Green;
+    case 2: return Color.Blue;
+    default: throw new Error(`Unknown Color discriminant: ${value}`);
+  }
+}

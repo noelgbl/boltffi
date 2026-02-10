@@ -19,6 +19,7 @@
 pub mod jni;
 pub mod kotlin;
 pub mod swift;
+pub mod typescript;
 
 use std::collections::HashMap;
 

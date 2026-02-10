@@ -1,0 +1,14 @@
+{{ self::ts_doc_block(doc, "") }}export enum {{ name }} {
+{%- for variant in variants %}
+{{ self::ts_doc_block(variant.doc, "  ") }}  {{ variant.name }} = {{ variant.discriminant }},
+{%- endfor %}
+}
+
+function decode{{ name }}(value: number): {{ name }} {
+  switch (value) {
+{%- for variant in variants %}
+    case {{ variant.discriminant }}: return {{ name }}.{{ variant.name }};
+{%- endfor %}
+    default: throw new Error(`Unknown {{ name }} discriminant: ${value}`);
+  }
+}
