@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
 
 use crate::ringbuffer::SpscRingBuffer;
@@ -401,58 +401,85 @@ pub unsafe fn subscription_free<T: Send + 'static>(handle: SubscriptionHandle) {
 }
 
 struct SubscriberSlot<T: Send + 'static> {
-    subscription_ptr: AtomicPtr<EventSubscription<T>>,
+    weak_ptr: AtomicPtr<()>,
+    _marker: std::marker::PhantomData<T>,
 }
 
 impl<T: Send + 'static> SubscriberSlot<T> {
     const fn empty() -> Self {
         Self {
-            subscription_ptr: AtomicPtr::new(std::ptr::null_mut()),
+            weak_ptr: AtomicPtr::new(std::ptr::null_mut()),
+            _marker: std::marker::PhantomData,
         }
     }
 
     fn try_claim(&self, subscription: &Arc<EventSubscription<T>>) -> bool {
-        let raw_ptr = Arc::as_ptr(subscription) as *mut EventSubscription<T>;
-        self.subscription_ptr
-            .compare_exchange(
-                std::ptr::null_mut(),
-                raw_ptr,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
+        let weak = Arc::downgrade(subscription);
+        let raw_ptr = Weak::into_raw(weak) as *mut ();
+
+        match self.weak_ptr.compare_exchange(
+            std::ptr::null_mut(),
+            raw_ptr,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => true,
+            Err(_) => {
+                unsafe { Weak::from_raw(raw_ptr as *const EventSubscription<T>) };
+                false
+            }
+        }
     }
 
-    fn load_subscription(&self) -> Option<*const EventSubscription<T>> {
-        let ptr = self.subscription_ptr.load(Ordering::Acquire);
-        (!ptr.is_null()).then_some(ptr)
+    fn upgrade(&self) -> Option<Arc<EventSubscription<T>>> {
+        let ptr = self.weak_ptr.load(Ordering::Acquire);
+        if ptr.is_null() {
+            return None;
+        }
+
+        let weak = unsafe { Weak::from_raw(ptr as *const EventSubscription<T>) };
+        let strong = weak.upgrade();
+        std::mem::forget(weak);
+        strong
     }
 
-    fn clear_if_inactive(&self) {
-        let ptr = self.subscription_ptr.load(Ordering::Acquire);
+    fn clear_if_dead(&self) {
+        let ptr = self.weak_ptr.load(Ordering::Acquire);
         if ptr.is_null() {
             return;
         }
 
-        let is_active = unsafe { (*ptr).is_active() };
-        if !is_active {
-            self.subscription_ptr
+        let weak = unsafe { Weak::from_raw(ptr as *const EventSubscription<T>) };
+        let is_dead = weak.strong_count() == 0;
+        std::mem::forget(weak);
+
+        let successfully_cleared = is_dead
+            && self
+                .weak_ptr
                 .compare_exchange(
                     ptr,
                     std::ptr::null_mut(),
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
-                .ok();
+                .is_ok();
+
+        if successfully_cleared {
+            unsafe { Weak::from_raw(ptr as *const EventSubscription<T>) };
         }
     }
 
-    fn is_occupied(&self) -> bool {
-        let ptr = self.subscription_ptr.load(Ordering::Acquire);
-        if ptr.is_null() {
-            return false;
+    fn is_alive(&self) -> bool {
+        self.upgrade().map(|sub| sub.is_active()).unwrap_or(false)
+    }
+}
+
+impl<T: Send + 'static> Drop for SubscriberSlot<T> {
+    fn drop(&mut self) {
+        let ptr = *self.weak_ptr.get_mut();
+        if !ptr.is_null() {
+            unsafe { Weak::from_raw(ptr as *const EventSubscription<T>) };
         }
-        unsafe { (*ptr).is_active() }
     }
 }
 
@@ -478,7 +505,7 @@ impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> StreamProducer<T, M
 
         self.subscriber_slots
             .iter()
-            .for_each(|slot| slot.clear_if_inactive());
+            .for_each(|slot| slot.clear_if_dead());
 
         let slot_claimed = self
             .subscriber_slots
@@ -497,11 +524,8 @@ impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> StreamProducer<T, M
 
     pub fn push(&self, event: T) {
         self.subscriber_slots.iter().for_each(|slot| {
-            if let Some(subscription_ptr) = slot.load_subscription() {
-                let subscription = unsafe { &*subscription_ptr };
-                if subscription.is_active() {
-                    subscription.push_event(event);
-                }
+            if let Some(subscription) = slot.upgrade().filter(|s| s.is_active()) {
+                subscription.push_event(event);
             }
         });
     }
@@ -509,7 +533,7 @@ impl<T: Send + Copy + 'static, const MAX_SUBSCRIBERS: usize> StreamProducer<T, M
     pub fn subscriber_count(&self) -> usize {
         self.subscriber_slots
             .iter()
-            .filter(|slot| slot.is_occupied())
+            .filter(|slot| slot.is_alive())
             .count()
     }
 }
