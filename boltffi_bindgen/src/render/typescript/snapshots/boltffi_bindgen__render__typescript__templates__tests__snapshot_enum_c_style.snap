@@ -14,11 +14,16 @@ export enum Color {
   Blue = 2,
 }
 
-function decodeColor(value: number): Color {
-  switch (value) {
-    case 0: return Color.Red;
-    case 1: return Color.Green;
-    case 2: return Color.Blue;
-    default: throw new Error(`Unknown Color discriminant: ${value}`);
-  }
-}
+const ColorCodec: WireCodec<Color> = {
+  size: (_v) => 4,
+  encode: (writer, v) => { writer.writeI32(v); },
+  decode: (reader) => {
+    const value = reader.readI32();
+    switch (value) {
+      case 0: return Color.Red;
+      case 1: return Color.Green;
+      case 2: return Color.Blue;
+      default: throw new Error(`Unknown Color discriminant: ${value}`);
+    }
+  },
+};

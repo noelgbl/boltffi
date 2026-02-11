@@ -9,7 +9,9 @@ use crate::ir::abi::{
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{EnumDef, FunctionDef, ParamDef, RecordDef};
 use crate::ir::ids::{EnumId, FieldName, RecordId};
-use crate::ir::ops::{ReadOp, ReadSeq, SizeExpr, WireShape, WriteOp, WriteSeq};
+use crate::ir::ops::{
+    FieldWriteOp, ReadOp, ReadSeq, SizeExpr, ValueExpr, WireShape, WriteOp, WriteSeq,
+};
 use crate::ir::plan::AbiType;
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::render::typescript::emit;
@@ -187,7 +189,7 @@ impl<'a> TypeScriptLowerer<'a> {
                             name: camel_case(field.name.as_str()),
                             ts_type: emit::ts_type(&field.type_expr),
                             decode: field.decode.clone(),
-                            encode: field.encode.clone(),
+                            encode: remap_named_to_field(&field.encode),
                         })
                         .collect(),
                 };
@@ -273,11 +275,11 @@ impl<'a> TypeScriptLowerer<'a> {
                 let ts_type = param_def
                     .map(|p| emit::ts_type(&p.type_expr))
                     .unwrap_or_else(|| "unknown".to_string());
-                let is_record = param_def
-                    .map(|p| matches!(&p.type_expr, TypeExpr::Record(_)))
+                let has_codec = param_def
+                    .map(|p| matches!(&p.type_expr, TypeExpr::Record(_) | TypeExpr::Enum(_)))
                     .unwrap_or(false);
-                let conversion = if is_record {
-                    TsParamConversion::RecordEncoded {
+                let conversion = if has_codec {
+                    TsParamConversion::CodecEncoded {
                         codec_name: ts_type.clone(),
                     }
                 } else {
@@ -491,6 +493,125 @@ fn record_encode_fields(record: &AbiRecord) -> HashMap<FieldName, WriteSeq> {
                 .map(|field| (field.name.clone(), field.seq.clone()))
         })
         .collect()
+}
+
+fn remap_named_to_field(seq: &WriteSeq) -> WriteSeq {
+    WriteSeq {
+        size: remap_named_in_size(&seq.size),
+        ops: seq.ops.iter().map(remap_named_in_write_op).collect(),
+        shape: seq.shape,
+    }
+}
+
+fn remap_named_in_value(expr: &ValueExpr) -> ValueExpr {
+    match expr {
+        ValueExpr::Named(name) => ValueExpr::Instance.field(FieldName::new(name)),
+        ValueExpr::Field(parent, field) => {
+            ValueExpr::Field(Box::new(remap_named_in_value(parent)), field.clone())
+        }
+        other => other.clone(),
+    }
+}
+
+fn remap_named_in_size(size: &SizeExpr) -> SizeExpr {
+    match size {
+        SizeExpr::StringLen(v) => SizeExpr::StringLen(remap_named_in_value(v)),
+        SizeExpr::BytesLen(v) => SizeExpr::BytesLen(remap_named_in_value(v)),
+        SizeExpr::ValueSize(v) => SizeExpr::ValueSize(remap_named_in_value(v)),
+        SizeExpr::WireSize { value, record_id } => SizeExpr::WireSize {
+            value: remap_named_in_value(value),
+            record_id: record_id.clone(),
+        },
+        SizeExpr::BuiltinSize { id, value } => SizeExpr::BuiltinSize {
+            id: id.clone(),
+            value: remap_named_in_value(value),
+        },
+        SizeExpr::Sum(parts) => SizeExpr::Sum(parts.iter().map(remap_named_in_size).collect()),
+        SizeExpr::OptionSize { value, inner } => SizeExpr::OptionSize {
+            value: remap_named_in_value(value),
+            inner: Box::new(remap_named_in_size(inner)),
+        },
+        SizeExpr::VecSize {
+            value,
+            inner,
+            layout,
+        } => SizeExpr::VecSize {
+            value: remap_named_in_value(value),
+            inner: Box::new(remap_named_in_size(inner)),
+            layout: layout.clone(),
+        },
+        SizeExpr::ResultSize { value, ok, err } => SizeExpr::ResultSize {
+            value: remap_named_in_value(value),
+            ok: Box::new(remap_named_in_size(ok)),
+            err: Box::new(remap_named_in_size(err)),
+        },
+        other => other.clone(),
+    }
+}
+
+fn remap_named_in_write_op(op: &WriteOp) -> WriteOp {
+    match op {
+        WriteOp::Primitive { primitive, value } => WriteOp::Primitive {
+            primitive: *primitive,
+            value: remap_named_in_value(value),
+        },
+        WriteOp::String { value } => WriteOp::String {
+            value: remap_named_in_value(value),
+        },
+        WriteOp::Bytes { value } => WriteOp::Bytes {
+            value: remap_named_in_value(value),
+        },
+        WriteOp::Option { value, some } => WriteOp::Option {
+            value: remap_named_in_value(value),
+            some: Box::new(remap_named_to_field(some)),
+        },
+        WriteOp::Vec {
+            value,
+            element_type,
+            element,
+            layout,
+        } => WriteOp::Vec {
+            value: remap_named_in_value(value),
+            element_type: element_type.clone(),
+            element: Box::new(remap_named_to_field(element)),
+            layout: layout.clone(),
+        },
+        WriteOp::Record { id, value, fields } => WriteOp::Record {
+            id: id.clone(),
+            value: remap_named_in_value(value),
+            fields: fields
+                .iter()
+                .map(|f| FieldWriteOp {
+                    name: f.name.clone(),
+                    accessor: remap_named_in_value(&f.accessor),
+                    seq: remap_named_to_field(&f.seq),
+                })
+                .collect(),
+        },
+        WriteOp::Enum { id, value, layout } => WriteOp::Enum {
+            id: id.clone(),
+            value: remap_named_in_value(value),
+            layout: layout.clone(),
+        },
+        WriteOp::Result { value, ok, err } => WriteOp::Result {
+            value: remap_named_in_value(value),
+            ok: Box::new(remap_named_to_field(ok)),
+            err: Box::new(remap_named_to_field(err)),
+        },
+        WriteOp::Builtin { id, value } => WriteOp::Builtin {
+            id: id.clone(),
+            value: remap_named_in_value(value),
+        },
+        WriteOp::Custom {
+            id,
+            value,
+            underlying,
+        } => WriteOp::Custom {
+            id: id.clone(),
+            value: remap_named_in_value(value),
+            underlying: Box::new(remap_named_to_field(underlying)),
+        },
+    }
 }
 
 #[cfg(test)]

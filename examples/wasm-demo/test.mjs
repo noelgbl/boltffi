@@ -14,6 +14,8 @@ import {
   echoPolygon, makePolygon, polygonVertexCount, polygonCentroid,
   echoTeam, makeTeam, teamSize,
   echoClassroom, makeClassroom,
+  Status, echoStatus, statusToString,
+  echoShape, shapeArea, makeCircle, makeRectangle,
 } from './dist/wasm/pkg/node.js';
 
 await initialized;
@@ -141,5 +143,32 @@ assert(classroom1.students[1].age === 22, 'makeClassroom students[1].age');
 const classroom2 = echoClassroom({ students: [{ name: 'Charlie', age: 25 }] });
 assert(classroom2.students.length === 1, 'echoClassroom length');
 assert(classroom2.students[0].name === 'Charlie', 'echoClassroom students[0].name');
+
+console.log('Testing enums (C-style - Status)...');
+assert(echoStatus(Status.Active) === Status.Active, 'echoStatus Active');
+assert(echoStatus(Status.Inactive) === Status.Inactive, 'echoStatus Inactive');
+assert(echoStatus(Status.Pending) === Status.Pending, 'echoStatus Pending');
+assert(statusToString(Status.Active) === 'active', 'statusToString Active');
+assert(statusToString(Status.Inactive) === 'inactive', 'statusToString Inactive');
+
+console.log('Testing enums (Data - Shape)...');
+const circle = makeCircle(5.0);
+assert(circle.tag === 'Circle', 'makeCircle tag');
+assert(circle.radius === 5.0, 'makeCircle radius');
+assert(Math.abs(shapeArea(circle) - Math.PI * 25) < 0.0001, 'shapeArea circle');
+
+const rect = makeRectangle(3.0, 4.0);
+assert(rect.tag === 'Rectangle', 'makeRectangle tag');
+assert(rect.width === 3.0, 'makeRectangle width');
+assert(rect.height === 4.0, 'makeRectangle height');
+assert(shapeArea(rect) === 12.0, 'shapeArea rectangle');
+
+const echoedCircle = echoShape({ tag: 'Circle', radius: 2.5 });
+assert(echoedCircle.tag === 'Circle', 'echoShape circle tag');
+assert(echoedCircle.radius === 2.5, 'echoShape circle radius');
+
+const echoedPoint = echoShape({ tag: 'Point' });
+assert(echoedPoint.tag === 'Point', 'echoShape point tag');
+assert(shapeArea({ tag: 'Point' }) === 0.0, 'shapeArea point');
 
 console.log('\nAll tests passed!');

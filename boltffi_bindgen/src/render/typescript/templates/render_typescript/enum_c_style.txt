@@ -4,11 +4,16 @@
 {%- endfor %}
 }
 
-function decode{{ name }}(value: number): {{ name }} {
-  switch (value) {
+const {{ name }}Codec: WireCodec<{{ name }}> = {
+  size: (_v) => 4,
+  encode: (writer, v) => { writer.writeI32(v); },
+  decode: (reader) => {
+    const value = reader.readI32();
+    switch (value) {
 {%- for variant in variants %}
-    case {{ variant.discriminant }}: return {{ name }}.{{ variant.name }};
+      case {{ variant.discriminant }}: return {{ name }}.{{ variant.name }};
 {%- endfor %}
-    default: throw new Error(`Unknown {{ name }} discriminant: ${value}`);
-  }
-}
+      default: throw new Error(`Unknown {{ name }} discriminant: ${value}`);
+    }
+  },
+};

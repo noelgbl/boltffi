@@ -75,6 +75,16 @@ impl TsVariant {
     pub fn is_unit(&self) -> bool {
         self.fields.is_empty()
     }
+
+    pub fn size_expr(&self) -> String {
+        if self.fields.is_empty() {
+            "4".to_string()
+        } else {
+            let field_sizes: Vec<String> =
+                self.fields.iter().map(|f| f.wire_size_expr("v")).collect();
+            format!("4 + {}", field_sizes.join(" + "))
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -127,7 +137,7 @@ impl TsParam {
                 "const {}_alloc = _module.allocString({});",
                 self.name, self.name
             )),
-            TsParamConversion::RecordEncoded { codec_name } => {
+            TsParamConversion::CodecEncoded { codec_name } => {
                 let writer_name = format!("{}_writer", self.name);
                 Some(format!(
                     "const {writer_name} = _module.allocWriter({codec_name}Codec.size({}));\n  {codec_name}Codec.encode({writer_name}, {});",
@@ -154,7 +164,7 @@ impl TsParam {
                     format!("{}_alloc.len", self.name),
                 ]
             }
-            TsParamConversion::RecordEncoded { .. } | TsParamConversion::OtherEncoded { .. } => {
+            TsParamConversion::CodecEncoded { .. } | TsParamConversion::OtherEncoded { .. } => {
                 vec![
                     format!("{}_writer.ptr", self.name),
                     format!("{}_writer.len", self.name),
@@ -167,7 +177,7 @@ impl TsParam {
         match &self.conversion {
             TsParamConversion::Direct => None,
             TsParamConversion::String => Some(format!("_module.freeAlloc({}_alloc);", self.name)),
-            TsParamConversion::RecordEncoded { .. } | TsParamConversion::OtherEncoded { .. } => {
+            TsParamConversion::CodecEncoded { .. } | TsParamConversion::OtherEncoded { .. } => {
                 Some(format!("_module.freeWriter({}_writer);", self.name))
             }
         }
@@ -182,7 +192,7 @@ impl TsParam {
 pub enum TsParamConversion {
     Direct,
     String,
-    RecordEncoded { codec_name: String },
+    CodecEncoded { codec_name: String },
     OtherEncoded { encode: WriteSeq },
 }
 

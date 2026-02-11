@@ -1,6 +1,6 @@
 use boltffi_ffi_rules::naming::snake_to_camel as camel_case;
 
-use crate::ir::codec::{EnumLayout, VecLayout};
+use crate::ir::codec::VecLayout;
 use crate::ir::ids::BuiltinId;
 use crate::ir::ops::{ReadOp, ReadSeq, SizeExpr, ValueExpr, WriteOp, WriteSeq};
 use crate::ir::types::{PrimitiveType, TypeExpr};
@@ -174,14 +174,9 @@ fn emit_reader_read_op(op: &ReadOp) -> String {
         ReadOp::Record { id, .. } => {
             format!("{}Codec.decode(reader)", to_pascal_case(id.as_str()))
         }
-        ReadOp::Enum { id, layout, .. } => match layout {
-            EnumLayout::CStyle { .. } => {
-                format!("decode{}(reader.readI32())", to_pascal_case(id.as_str()))
-            }
-            EnumLayout::Data { .. } | EnumLayout::Recursive => {
-                format!("decode{}(reader)", to_pascal_case(id.as_str()))
-            }
-        },
+        ReadOp::Enum { id, .. } => {
+            format!("{}Codec.decode(reader)", to_pascal_case(id.as_str()))
+        }
         ReadOp::Result { ok, err, .. } => {
             let ok_read = emit_reader_read(ok);
             let err_read = emit_reader_read(err);
@@ -262,16 +257,12 @@ fn emit_writer_write_op(op: &WriteOp, w: &str, root_value: &str) -> String {
                 render_value(value, root_value)
             )
         }
-        WriteOp::Enum {
-            id, value, layout, ..
-        } => {
-            let val = render_value(value, root_value);
-            match layout {
-                EnumLayout::CStyle { .. } => format!("{w}.writeI32({val})"),
-                EnumLayout::Data { .. } | EnumLayout::Recursive => {
-                    format!("encode{}({w}, {val})", to_pascal_case(id.as_str()))
-                }
-            }
+        WriteOp::Enum { id, value, .. } => {
+            format!(
+                "{}Codec.encode({w}, {})",
+                to_pascal_case(id.as_str()),
+                render_value(value, root_value)
+            )
         }
         WriteOp::Result { value, ok, err } => {
             let val = render_value(value, root_value);
