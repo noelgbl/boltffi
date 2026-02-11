@@ -6,6 +6,8 @@ pub struct CheckOptions {
     pub fix: bool,
     pub apple: bool,
     pub android: bool,
+    pub wasm: bool,
+    pub wasm_target_triple: Option<String>,
 }
 
 impl Default for CheckOptions {
@@ -14,22 +16,41 @@ impl Default for CheckOptions {
             fix: false,
             apple: true,
             android: true,
+            wasm: true,
+            wasm_target_triple: Some(RustTarget::WASM32_UNKNOWN_UNKNOWN.triple().to_string()),
         }
     }
 }
 
 pub fn run_check(options: CheckOptions) -> Result<bool> {
-    let mut required_targets = Vec::new();
+    let mut required_triples = Vec::new();
 
     if options.apple {
-        required_targets.extend(RustTarget::ALL_IOS.iter().cloned());
+        required_triples.extend(
+            RustTarget::ALL_IOS
+                .iter()
+                .map(|target| target.triple().to_string()),
+        );
     }
 
     if options.android {
-        required_targets.extend(RustTarget::ALL_ANDROID.iter().cloned());
+        required_triples.extend(
+            RustTarget::ALL_ANDROID
+                .iter()
+                .map(|target| target.triple().to_string()),
+        );
     }
 
-    let check = EnvironmentCheck::run(&required_targets);
+    if options.wasm {
+        required_triples.push(
+            options
+                .wasm_target_triple
+                .clone()
+                .unwrap_or_else(|| RustTarget::WASM32_UNKNOWN_UNKNOWN.triple().to_string()),
+        );
+    }
+
+    let check = EnvironmentCheck::run_with_required_triples(&required_triples);
 
     print_environment_status(&check, &options);
 
@@ -85,6 +106,20 @@ fn print_environment_status(check: &EnvironmentCheck, options: &CheckOptions) {
             Some(path) => println!("  {} Android NDK ({})", status_icon(true), path),
             None => println!("  {} Android NDK not found", status_icon(false)),
         }
+        println!();
+    }
+
+    if options.wasm {
+        println!("WASM Targets");
+        let wasm_target = options
+            .wasm_target_triple
+            .as_deref()
+            .unwrap_or(RustTarget::WASM32_UNKNOWN_UNKNOWN.triple());
+        let installed = check
+            .installed_targets
+            .iter()
+            .any(|installed| installed == wasm_target);
+        println!("  {} {}", status_icon(installed), wasm_target);
         println!();
     }
 

@@ -17,7 +17,7 @@ pub struct Builder<'a> {
 }
 
 pub struct BuildResult {
-    pub target: RustTarget,
+    pub triple: String,
     pub success: bool,
 }
 
@@ -32,8 +32,8 @@ impl<'a> Builder<'a> {
             .any(|target| target.platform() == Platform::Android)
             .then(|| {
                 AndroidToolchain::discover(
-                    self.config.android.min_sdk,
-                    self.config.android.ndk_version.as_deref(),
+                    self.config.android_min_sdk(),
+                    self.config.android_ndk_version(),
                 )
             })
             .transpose()?;
@@ -54,6 +54,33 @@ impl<'a> Builder<'a> {
 
     pub fn build_macos(&self) -> Result<Vec<BuildResult>> {
         self.build_targets(RustTarget::ALL_MACOS)
+    }
+
+    pub fn build_wasm_with_triple(&self, triple: &str) -> Result<Vec<BuildResult>> {
+        let mut command = Command::new("cargo");
+        command.arg("build");
+
+        if self.options.release {
+            command.arg("--release");
+        }
+
+        command.arg("--target").arg(triple);
+
+        if let Some(ref package) = self.options.package {
+            command.arg("-p").arg(package);
+        } else {
+            command.arg("-p").arg(self.config.library_name());
+        }
+
+        let success = command
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+
+        Ok(vec![BuildResult {
+            triple: triple.to_string(),
+            success,
+        }])
     }
 
     fn build_single_target(
@@ -85,7 +112,7 @@ impl<'a> Builder<'a> {
         let success = cmd.status().map(|status| status.success()).unwrap_or(false);
 
         Ok(BuildResult {
-            target: target.clone(),
+            triple: target.triple().to_string(),
             success,
         })
     }
@@ -98,10 +125,10 @@ pub fn all_successful(results: &[BuildResult]) -> bool {
     results.iter().all(|r| r.success)
 }
 
-pub fn failed_targets(results: &[BuildResult]) -> Vec<&RustTarget> {
+pub fn failed_targets(results: &[BuildResult]) -> Vec<String> {
     results
         .iter()
         .filter(|r| !r.success)
-        .map(|r| &r.target)
+        .map(|r| r.triple.clone())
         .collect()
 }

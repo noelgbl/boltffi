@@ -22,15 +22,25 @@ pub struct ToolsCheck {
 
 impl EnvironmentCheck {
     pub fn run(required_targets: &[RustTarget]) -> Self {
+        let required_triples = required_targets
+            .iter()
+            .map(|target| target.triple().to_string())
+            .collect::<Vec<_>>();
+        Self::run_with_required_triples(&required_triples)
+    }
+
+    pub fn run_with_required_triples(required_triples: &[String]) -> Self {
         let rust_version = get_rust_version();
         let installed_targets = get_installed_targets();
 
-        let required_triples: Vec<&str> = required_targets.iter().map(|t| t.triple()).collect();
-
         let missing_targets = required_triples
             .iter()
-            .filter(|triple| !installed_targets.iter().any(|t| t == *triple))
-            .map(|s| s.to_string())
+            .filter(|triple| {
+                !installed_targets
+                    .iter()
+                    .any(|installed| installed == *triple)
+            })
+            .cloned()
             .collect();
 
         let tools = ToolsCheck {

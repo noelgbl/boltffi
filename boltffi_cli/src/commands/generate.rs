@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use boltffi_bindgen::render::typescript::{TypeScriptEmitter, TypeScriptLowerer};
 use boltffi_bindgen::{
     CHeaderGenerator, FactoryStyle, KotlinOptions, TypeConversion as BindgenTypeConversion,
     TypeMapping as BindgenTypeMapping, TypeMappings, ir, render, scan_crate,
@@ -15,6 +16,7 @@ pub enum GenerateTarget {
     Swift,
     Kotlin,
     Header,
+    Typescript,
     All,
 }
 
@@ -28,10 +30,20 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         GenerateTarget::Swift => generate_swift(config, options.output),
         GenerateTarget::Kotlin => generate_kotlin(config, options.output),
         GenerateTarget::Header => generate_header(config, options.output),
+        GenerateTarget::Typescript => generate_typescript(config, options.output),
         GenerateTarget::All => {
-            generate_swift(config, options.output.clone())?;
-            generate_kotlin(config, options.output.clone())?;
-            generate_header(config, options.output)?;
+            if config.is_apple_enabled() {
+                generate_swift(config, options.output.clone())?;
+            }
+            if config.is_android_enabled() {
+                generate_kotlin(config, options.output.clone())?;
+            }
+            if config.is_apple_enabled() || config.is_android_enabled() {
+                generate_header(config, options.output.clone())?;
+            }
+            if config.is_wasm_enabled() {
+                generate_typescript(config, options.output)?;
+            }
             Ok(())
         }
     }
@@ -59,6 +71,13 @@ fn convert_type_mappings(
 }
 
 fn generate_swift(config: &Config, output: Option<PathBuf>) -> Result<()> {
+    if !config.is_apple_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "targets.apple.enabled = false".to_string(),
+            status: None,
+        });
+    }
+
     let output_dir = output.unwrap_or_else(|| config.apple_swift_output());
     let library_name = config.library_name();
     let capitalized = library_name
@@ -110,6 +129,13 @@ fn generate_swift(config: &Config, output: Option<PathBuf>) -> Result<()> {
 }
 
 fn generate_kotlin(config: &Config, output: Option<PathBuf>) -> Result<()> {
+    if !config.is_android_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "targets.android.enabled = false".to_string(),
+            status: None,
+        });
+    }
+
     let package_name = config.android_kotlin_package();
     let package_path = package_name.replace('.', "/");
 
@@ -136,14 +162,14 @@ fn generate_kotlin(config: &Config, output: Option<PathBuf>) -> Result<()> {
         status: None,
     })?;
 
-    let factory_style = match config.android.kotlin.factory_style {
+    let factory_style = match config.android_kotlin_factory_style() {
         ConfigFactoryStyle::Constructors => FactoryStyle::Constructors,
         ConfigFactoryStyle::CompanionMethods => FactoryStyle::CompanionMethods,
     };
     let module_name = config.android_kotlin_module_name();
     let kotlin_options = KotlinOptions {
         factory_style,
-        api_style: match config.android.kotlin.api_style {
+        api_style: match config.android_kotlin_api_style() {
             KotlinApiStyle::TopLevel => boltffi_bindgen::KotlinApiStyle::TopLevel,
             KotlinApiStyle::ModuleObject => boltffi_bindgen::KotlinApiStyle::ModuleObject,
         },
@@ -189,7 +215,20 @@ fn generate_kotlin(config: &Config, output: Option<PathBuf>) -> Result<()> {
 }
 
 fn generate_header(config: &Config, output: Option<PathBuf>) -> Result<()> {
-    let output_dir = output.unwrap_or_else(|| config.apple_header_output());
+    if !config.is_apple_enabled() && !config.is_android_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "both targets.apple.enabled and targets.android.enabled are false".to_string(),
+            status: None,
+        });
+    }
+
+    let output_dir = output.unwrap_or_else(|| {
+        if config.is_apple_enabled() {
+            config.apple_header_output()
+        } else {
+            config.android_header_output()
+        }
+    });
     let output_path = output_dir.join(format!("{}.h", config.library_name()));
 
     std::fs::create_dir_all(&output_dir).map_err(|source| CliError::CreateDirectoryFailed {
@@ -210,6 +249,53 @@ fn generate_header(config: &Config, output: Option<PathBuf>) -> Result<()> {
     let header_code = CHeaderGenerator::generate(&module);
 
     std::fs::write(&output_path, header_code).map_err(|source| CliError::WriteFailed {
+        path: output_path.clone(),
+        source,
+    })?;
+
+    println!("Generated: {}", output_path.display());
+    Ok(())
+}
+
+fn generate_typescript(config: &Config, output: Option<PathBuf>) -> Result<()> {
+    if !config.is_wasm_enabled() {
+        return Err(CliError::CommandFailed {
+            command: "targets.wasm.enabled = false".to_string(),
+            status: None,
+        });
+    }
+
+    let output_dir = output.unwrap_or_else(|| config.wasm_typescript_output());
+    let output_path = output_dir.join(format!("{}.ts", config.wasm_typescript_module_name()));
+
+    std::fs::create_dir_all(&output_dir).map_err(|source| CliError::CreateDirectoryFailed {
+        path: output_dir.clone(),
+        source,
+    })?;
+
+    let crate_dir = std::env::current_dir()
+        .and_then(|p| p.canonicalize())
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let crate_name = config.library_name();
+
+    let mut module = scan_crate(&crate_dir, crate_name).map_err(|e| CliError::CommandFailed {
+        command: format!("scan_crate: {}", e),
+        status: None,
+    })?;
+
+    let contract = ir::build_contract(&mut module);
+    let abi_contract = ir::Lowerer::new(&contract).to_abi_contract();
+
+    let ts_module =
+        TypeScriptLowerer::new(&contract, &abi_contract, crate_name.to_string()).lower();
+    let runtime_package = config.wasm_runtime_package();
+    let ts_code = TypeScriptEmitter::emit(&ts_module).replacen(
+        "from \"@boltffi/runtime\"",
+        &format!("from \"{}\"", runtime_package),
+        1,
+    );
+
+    std::fs::write(&output_path, &ts_code).map_err(|source| CliError::WriteFailed {
         path: output_path.clone(),
         source,
     })?;

@@ -3,5 +3,5 @@ source: boltffi_bindgen/src/render/typescript/templates.rs
 expression: template.render().unwrap()
 ---
 export function reset(): void {
-  _module.exports.boltffi_reset();
+  (_module.exports.boltffi_reset as Function)();
 }

@@ -37,8 +37,8 @@ impl<'a> AndroidPackager<'a> {
 
         let jnilibs_path = self.config.android_pack_output();
         let android_toolchain = AndroidToolchain::discover(
-            self.config.android.min_sdk,
-            self.config.android.ndk_version.as_deref(),
+            self.config.android_min_sdk(),
+            self.config.android_ndk_version(),
         )?;
 
         std::fs::create_dir_all(&jnilibs_path).map_err(|source| {

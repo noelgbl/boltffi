@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["boltffi", "boltffi_core", "boltffi_macros", "boltffi_bindgen", "boltffi_cli", "boltffi_ffi_rules", "boltffi_verify", "boltffi_tests"]
-exclude = ["benchmarks/rust-boltffi", "benchmarks/rust-uniffi"]
+exclude = ["benchmarks/rust-boltffi", "benchmarks/rust-uniffi", "examples/wasm-demo"]
 
 [workspace.package]
 license = "MIT"

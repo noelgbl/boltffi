@@ -292,7 +292,9 @@ fn emit_writer_write_op(op: &WriteOp, w: &str, root_value: &str) -> String {
             let val = render_value(value, root_value);
             let ok_write = emit_writer_write(ok, w, root_value);
             let err_write = emit_writer_write(err, w, root_value);
-            format!("{w}.writeResult({val}, () => {{ {ok_write} }}, () => {{ {err_write} }})")
+            format!(
+                "{w}.writeResult({val}, (okVal) => {{ {ok_write} }}, (errVal) => {{ {err_write} }})"
+            )
         }
         WriteOp::Custom { underlying, .. } => emit_writer_write(underlying, w, root_value),
     }
@@ -356,7 +358,9 @@ pub fn emit_size_expr(size: &SizeExpr, root_value: &str) -> String {
             let val = render_value(value, root_value);
             let ok_size = emit_size_expr(ok, root_value);
             let err_size = emit_size_expr(err, root_value);
-            format!("(1 + ({val} instanceof Error ? {err_size} : {ok_size}))")
+            format!(
+                "(1 + (((typeof {val} === \"object\" && {val} !== null && (\"tag\" in ({val} as any)) && ({val} as any).tag === \"err\") || {val} instanceof Error) ? {err_size} : {ok_size}))"
+            )
         }
     }
 }

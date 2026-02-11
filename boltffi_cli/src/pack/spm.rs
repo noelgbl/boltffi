@@ -257,7 +257,7 @@ let package = Package(
     }
 
     fn ios_version_for_spm(&self) -> String {
-        let deployment_target = &self.config.apple.deployment_target;
+        let deployment_target = self.config.apple_deployment_target();
 
         deployment_target
             .split('.')
@@ -267,7 +267,7 @@ let package = Package(
     }
 
     fn macos_platforms_fragment(&self) -> String {
-        if self.config.apple.include_macos {
+        if self.config.apple_include_macos() {
             "        .macOS(.v13)\n".to_string()
         } else {
             Default::default()

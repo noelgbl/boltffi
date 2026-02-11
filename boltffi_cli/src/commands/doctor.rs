@@ -8,6 +8,7 @@ use crate::target::RustTarget;
 pub struct DoctorOptions {
     pub apple: bool,
     pub android: bool,
+    pub wasm: bool,
 }
 
 pub fn run_doctor(options: DoctorOptions) -> Result<()> {
@@ -36,7 +37,16 @@ fn required_targets(options: &DoctorOptions) -> Vec<RustTarget> {
         .into_iter()
         .flatten();
 
-    apple_targets.chain(android_targets).collect()
+    let wasm_targets = options
+        .wasm
+        .then(|| RustTarget::ALL_WASM.iter().cloned())
+        .into_iter()
+        .flatten();
+
+    apple_targets
+        .chain(android_targets)
+        .chain(wasm_targets)
+        .collect()
 }
 
 fn print_environment(check: &EnvironmentCheck, options: &DoctorOptions) {
@@ -71,6 +81,19 @@ fn print_environment(check: &EnvironmentCheck, options: &DoctorOptions) {
             None => println!("  ndk: missing (set ANDROID_NDK_HOME)"),
         }
     }
+
+    if options.wasm {
+        println!();
+        println!(
+            "WASM target {}",
+            readiness(
+                check
+                    .installed_targets
+                    .iter()
+                    .any(|target| target == RustTarget::WASM32_UNKNOWN_UNKNOWN.triple())
+            )
+        );
+    }
 }
 
 fn print_config_summary() {
@@ -85,35 +108,50 @@ fn print_config_summary() {
         Ok(config) => {
             println!("Config: {}", config_path.display());
             println!("  crate: {}", config.library_name());
-            println!("  apple.output: {}", config.apple.output.display());
             println!(
-                "  apple.swift.output: {}",
+                "  targets.apple.output: {}",
+                config.apple_output().display()
+            );
+            println!(
+                "  targets.apple.swift.output: {}",
                 config.apple_swift_output().display()
             );
             println!(
-                "  apple.header.output: {}",
+                "  targets.apple.header.output: {}",
                 config.apple_header_output().display()
             );
             println!(
-                "  apple.xcframework.output: {}",
+                "  targets.apple.xcframework.output: {}",
                 config.apple_xcframework_output().display()
             );
             println!(
-                "  apple.spm.output: {}",
+                "  targets.apple.spm.output: {}",
                 config.apple_spm_output().display()
             );
-            println!("  android.output: {}", config.android.output.display());
             println!(
-                "  android.kotlin.output: {}",
+                "  targets.android.output: {}",
+                config.android_output().display()
+            );
+            println!(
+                "  targets.android.kotlin.output: {}",
                 config.android_kotlin_output().display()
             );
             println!(
-                "  android.header.output: {}",
+                "  targets.android.header.output: {}",
                 config.android_header_output().display()
             );
             println!(
-                "  android.pack.output: {}",
+                "  targets.android.pack.output: {}",
                 config.android_pack_output().display()
+            );
+            println!("  targets.wasm.output: {}", config.wasm_output().display());
+            println!(
+                "  targets.wasm.typescript.output: {}",
+                config.wasm_typescript_output().display()
+            );
+            println!(
+                "  targets.wasm.npm.output: {}",
+                config.wasm_npm_output().display()
             );
         }
         Err(error) => {

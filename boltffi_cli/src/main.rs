@@ -15,7 +15,7 @@ use commands::check::CheckOptions;
 use commands::doctor::DoctorOptions;
 use commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
 use commands::init::InitOptions;
-use commands::pack::{PackAndroidOptions, PackAppleOptions, PackCommand};
+use commands::pack::{PackAndroidOptions, PackAppleOptions, PackCommand, PackWasmOptions};
 use commands::verify::VerifyOptions;
 use commands::{run_build, run_check, run_doctor, run_init, run_pack, run_verify};
 use config::Config;
@@ -23,9 +23,9 @@ use error::{CliError, Result};
 
 #[derive(Parser)]
 #[command(name = "boltffi")]
-#[command(about = "BoltFFI - Rust FFI toolchain (Apple + Android)")]
+#[command(about = "BoltFFI - Rust FFI toolchain (Apple + Android + WASM)")]
 #[command(
-    after_help = "Examples:\n  boltffi init\n  boltffi check --apple\n  boltffi generate swift\n  boltffi build apple --release\n  boltffi pack apple --layout bundled\n\nConfig:\n  boltffi reads ./boltffi.toml\n  Apple settings live under [apple.*]\n  Android settings live under [android.*]\n"
+    after_help = "Examples:\n  boltffi init\n  boltffi check --apple\n  boltffi generate swift\n  boltffi build apple --release\n  boltffi build wasm --release\n  boltffi pack apple --layout bundled\n  boltffi pack wasm --release\n\nConfig:\n  boltffi reads ./boltffi.toml\n  Settings live under [targets.apple.*], [targets.android.*], [targets.wasm.*]\n"
 )]
 #[command(version)]
 struct Cli {
@@ -43,7 +43,7 @@ enum Commands {
 
     #[command(
         about = "Check toolchain + required rust targets",
-        long_about = "Check toolchain + required rust targets.\n\nIf no platform flags are provided, boltffi checks both Apple and Android.\n\nExamples:\n  boltffi check\n  boltffi check --apple\n  boltffi check --android\n  boltffi check --fix\n"
+        long_about = "Check toolchain + required rust targets.\n\nIf no platform flags are provided, boltffi checks Apple, Android, and WASM.\n\nExamples:\n  boltffi check\n  boltffi check --apple\n  boltffi check --android\n  boltffi check --wasm\n  boltffi check --fix\n"
     )]
     Check {
         #[arg(long, help = "Install missing rust targets")]
@@ -54,11 +54,14 @@ enum Commands {
 
         #[arg(long, help = "Check Android targets + NDK")]
         android: bool,
+
+        #[arg(long, help = "Check WASM target")]
+        wasm: bool,
     },
 
     #[command(
         about = "Print diagnostic environment info",
-        long_about = "Print diagnostic environment info.\n\nExamples:\n  boltffi doctor\n  boltffi doctor --apple\n  boltffi doctor --android\n"
+        long_about = "Print diagnostic environment info.\n\nExamples:\n  boltffi doctor\n  boltffi doctor --apple\n  boltffi doctor --android\n  boltffi doctor --wasm\n"
     )]
     Doctor {
         #[arg(long)]
@@ -66,6 +69,9 @@ enum Commands {
 
         #[arg(long)]
         android: bool,
+
+        #[arg(long)]
+        wasm: bool,
     },
 
     #[command(
@@ -86,7 +92,7 @@ enum Commands {
 
     #[command(
         about = "Build rust libraries for targets",
-        long_about = "Build rust libraries for targets.\n\nExamples:\n  boltffi build\n  boltffi build apple\n  boltffi build android --release\n"
+        long_about = "Build rust libraries for targets.\n\nExamples:\n  boltffi build\n  boltffi build apple\n  boltffi build android --release\n  boltffi build wasm --release\n"
     )]
     Build {
         #[arg(value_enum)]
@@ -97,8 +103,8 @@ enum Commands {
     },
 
     #[command(
-        about = "Package platform artifacts (xcframework/SPM/jniLibs)",
-        long_about = "Package platform artifacts.\n\nExamples:\n  boltffi pack apple\n  boltffi pack apple --layout bundled\n  boltffi pack android --release\n"
+        about = "Package platform artifacts (xcframework/SPM/jniLibs/npm)",
+        long_about = "Package platform artifacts.\n\nExamples:\n  boltffi pack apple\n  boltffi pack apple --layout bundled\n  boltffi pack android --release\n  boltffi pack wasm --release\n"
     )]
     Pack {
         #[command(subcommand)]
@@ -128,6 +134,8 @@ enum GenerateTargetArg {
     Kotlin,
     #[value(help = "Generate C header")]
     Header,
+    #[value(help = "Generate TypeScript bindings for WASM")]
+    Typescript,
     #[value(help = "Generate all bindings")]
     All,
 }
@@ -138,8 +146,8 @@ enum BuildPlatformArg {
     Apple,
     #[value(help = "Build Android targets")]
     Android,
-    #[value(help = "Build macOS target")]
-    Macos,
+    #[value(help = "Build wasm target")]
+    Wasm,
     #[value(help = "Build all configured targets")]
     All,
 }
@@ -148,7 +156,7 @@ enum BuildPlatformArg {
 enum PackTargetArg {
     #[command(
         about = "Build + package Apple artifacts",
-        long_about = "Build + package Apple artifacts.\n\nOutputs:\n  - xcframework: {apple.xcframework.output}/{Name}.xcframework\n  - SwiftPM:      {apple.spm.output}/Package.swift\n\nLayout:\n  bundled  -> one package with wrapper target\n  ffi-only -> standalone FFI package with Swift target\n  split    -> binary-only package (Swift bindings generated to apple.swift.output)\n"
+        long_about = "Build + package Apple artifacts.\n\nOutputs:\n  - xcframework: {targets.apple.xcframework.output}/{Name}.xcframework\n  - SwiftPM:      {targets.apple.spm.output}/Package.swift\n\nLayout:\n  bundled  -> one package with wrapper target\n  ffi-only -> standalone FFI package with Swift target\n  split    -> binary-only package (Swift bindings generated to targets.apple.swift.output)\n"
     )]
     Apple {
         #[arg(long)]
@@ -175,9 +183,24 @@ enum PackTargetArg {
 
     #[command(
         about = "Build + package Android artifacts",
-        long_about = "Build + package Android artifacts.\n\nOutputs:\n  - Kotlin/JNI: {android.kotlin.output}\n  - jniLibs:    {android.pack.output}\n"
+        long_about = "Build + package Android artifacts.\n\nOutputs:\n  - Kotlin/JNI: {targets.android.kotlin.output}\n  - jniLibs:    {targets.android.pack.output}\n"
     )]
     Android {
+        #[arg(long)]
+        release: bool,
+
+        #[arg(long, default_value = "true")]
+        regenerate: bool,
+
+        #[arg(long)]
+        no_build: bool,
+    },
+
+    #[command(
+        about = "Build + package WASM artifacts",
+        long_about = "Build + package WASM artifacts.\n\nOutputs:\n  - wasm binary: {targets.wasm.npm.output}/{module_name}_bg.wasm\n  - JS/TS files: {targets.wasm.npm.output}\n  - npm metadata: package.json/README.md (when enabled)\n"
+    )]
+    Wasm {
         #[arg(long)]
         release: bool,
 
@@ -224,19 +247,51 @@ fn execute_command(command: Commands) -> Result<()> {
             fix,
             apple,
             android,
+            wasm,
         } => {
+            let explicit_target_selected = apple || android || wasm;
+            let check_wasm = if explicit_target_selected { wasm } else { true };
+            let wasm_target_triple = if check_wasm {
+                load_config_if_present()?.map(|config| config.wasm_triple().to_string())
+            } else {
+                None
+            };
             let options = CheckOptions {
                 fix,
-                apple: apple || !android,
-                android: android || !apple,
+                apple: if explicit_target_selected {
+                    apple
+                } else {
+                    true
+                },
+                android: if explicit_target_selected {
+                    android
+                } else {
+                    true
+                },
+                wasm: check_wasm,
+                wasm_target_triple,
             };
             run_check(options).map(|_| ())
         }
 
-        Commands::Doctor { apple, android } => {
+        Commands::Doctor {
+            apple,
+            android,
+            wasm,
+        } => {
+            let explicit_target_selected = apple || android || wasm;
             let options = DoctorOptions {
-                apple: apple || !android,
-                android: android || !apple,
+                apple: if explicit_target_selected {
+                    apple
+                } else {
+                    true
+                },
+                android: if explicit_target_selected {
+                    android
+                } else {
+                    true
+                },
+                wasm: if explicit_target_selected { wasm } else { true },
             };
             run_doctor(options)
         }
@@ -249,6 +304,7 @@ fn execute_command(command: Commands) -> Result<()> {
                         GenerateTargetArg::Swift => GenerateTarget::Swift,
                         GenerateTargetArg::Kotlin => GenerateTarget::Kotlin,
                         GenerateTargetArg::Header => GenerateTarget::Header,
+                        GenerateTargetArg::Typescript => GenerateTarget::Typescript,
                         GenerateTargetArg::All => GenerateTarget::All,
                     })
                     .unwrap_or(GenerateTarget::All),
@@ -264,7 +320,7 @@ fn execute_command(command: Commands) -> Result<()> {
                     .map(|p| match p {
                         BuildPlatformArg::Apple => BuildPlatform::Apple,
                         BuildPlatformArg::Android => BuildPlatform::Android,
-                        BuildPlatformArg::Macos => BuildPlatform::MacOs,
+                        BuildPlatformArg::Wasm => BuildPlatform::Wasm,
                         BuildPlatformArg::All => BuildPlatform::All,
                     })
                     .unwrap_or(BuildPlatform::All),
@@ -306,6 +362,15 @@ fn execute_command(command: Commands) -> Result<()> {
                     regenerate,
                     no_build,
                 }),
+                PackTargetArg::Wasm {
+                    release,
+                    regenerate,
+                    no_build,
+                } => PackCommand::Wasm(PackWasmOptions {
+                    release,
+                    regenerate,
+                    no_build,
+                }),
             };
             run_pack(&config, command)
         }
@@ -336,14 +401,26 @@ fn load_config() -> Result<Config> {
     Config::load(&config_path).map_err(Into::into)
 }
 
+fn load_config_if_present() -> Result<Option<Config>> {
+    let config_path = PathBuf::from("boltffi.toml");
+
+    if !config_path.exists() {
+        return Ok(None);
+    }
+
+    Config::load(&config_path).map(Some).map_err(Into::into)
+}
+
 fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()> {
     println!("Running full release pipeline...");
     println!();
 
     let check_options = CheckOptions {
         fix: false,
-        apple: true,
-        android: true,
+        apple: config.is_apple_enabled(),
+        android: config.is_android_enabled(),
+        wasm: config.is_wasm_enabled(),
+        wasm_target_triple: Some(config.wasm_triple().to_string()),
     };
 
     println!("[1/4] Checking environment...");
@@ -361,7 +438,7 @@ fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()
             .map(|p| match p {
                 BuildPlatformArg::Apple => BuildPlatform::Apple,
                 BuildPlatformArg::Android => BuildPlatform::Android,
-                BuildPlatformArg::Macos => BuildPlatform::MacOs,
+                BuildPlatformArg::Wasm => BuildPlatform::Wasm,
                 BuildPlatformArg::All => BuildPlatform::All,
             })
             .unwrap_or(BuildPlatform::All),
@@ -383,31 +460,82 @@ fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()
     println!("[4/4] Packaging...");
 
     match platform {
-        Some(BuildPlatformArg::Apple) | None => {
-            run_pack(
-                config,
-                PackCommand::Apple(PackAppleOptions {
-                    release: true,
-                    version: None,
-                    regenerate: false,
-                    no_build: true,
-                    spm_only: false,
-                    xcframework_only: false,
-                    layout: None,
-                }),
-            )?;
+        Some(BuildPlatformArg::Apple) => {
+            if config.is_apple_enabled() {
+                run_pack(
+                    config,
+                    PackCommand::Apple(PackAppleOptions {
+                        release: true,
+                        version: None,
+                        regenerate: false,
+                        no_build: true,
+                        spm_only: false,
+                        xcframework_only: false,
+                        layout: None,
+                    }),
+                )?;
+            }
         }
         Some(BuildPlatformArg::Android) => {
-            run_pack(
-                config,
-                PackCommand::Android(PackAndroidOptions {
-                    release: true,
-                    regenerate: false,
-                    no_build: true,
-                }),
-            )?;
+            if config.is_android_enabled() {
+                run_pack(
+                    config,
+                    PackCommand::Android(PackAndroidOptions {
+                        release: true,
+                        regenerate: false,
+                        no_build: true,
+                    }),
+                )?;
+            }
         }
-        _ => {}
+        Some(BuildPlatformArg::Wasm) => {
+            if config.is_wasm_enabled() {
+                run_pack(
+                    config,
+                    PackCommand::Wasm(PackWasmOptions {
+                        release: true,
+                        regenerate: false,
+                        no_build: true,
+                    }),
+                )?;
+            }
+        }
+        Some(BuildPlatformArg::All) | None => {
+            if config.is_apple_enabled() {
+                run_pack(
+                    config,
+                    PackCommand::Apple(PackAppleOptions {
+                        release: true,
+                        version: None,
+                        regenerate: false,
+                        no_build: true,
+                        spm_only: false,
+                        xcframework_only: false,
+                        layout: None,
+                    }),
+                )?;
+            }
+            if config.is_android_enabled() {
+                run_pack(
+                    config,
+                    PackCommand::Android(PackAndroidOptions {
+                        release: true,
+                        regenerate: false,
+                        no_build: true,
+                    }),
+                )?;
+            }
+            if config.is_wasm_enabled() {
+                run_pack(
+                    config,
+                    PackCommand::Wasm(PackWasmOptions {
+                        release: true,
+                        regenerate: false,
+                        no_build: true,
+                    }),
+                )?;
+            }
+        }
     }
 
     println!();

@@ -82,7 +82,7 @@ impl<'a> XcframeworkBuilder<'a> {
     }
 
     fn filter_macos_libraries(&self) -> Vec<&BuiltLibrary> {
-        if !self.config.apple.include_macos {
+        if !self.config.apple_include_macos() {
             return Vec::new();
         }
 

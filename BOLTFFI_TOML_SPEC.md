@@ -2,6 +2,8 @@
 
 `boltffi.toml` configures `boltffi` code generation and packaging. The CLI reads it from the current working directory.
 
+This document is normative. It defines schema, defaults, validation rules, and command semantics. For walkthroughs and usage examples, see [BOLTFFI_TOML_GUIDE.md](BOLTFFI_TOML_GUIDE.md).
+
 ## Minimal example
 
 ```toml
@@ -11,36 +13,58 @@ name = "mylib"
 
 Everything else is optional with defaults.
 
+## Path and placeholder rules
+
+Path fields are **project-root-relative** unless they are absolute paths or a section explicitly defines a different base path. This applies to `output`, `artifact_path`, and other path fields.
+
+Placeholder references like `{package.crate}` follow these fallback rules:
+- `{package.crate}` resolves to `package.crate` if set, otherwise `package.name`.
+- `{package.version}` resolves to `package.version` if set, otherwise read from `Cargo.toml`.
+- `{package.license}` and `{package.repository}` resolve to their respective fields, or empty string if unset.
+
 ## Top-level
 
 ### `[package]` (required)
 
-- `name` (string): logical name used for default module/class naming.
+- `name` (string): Logical name used for default module/class naming.
 - `crate` (string, optional): Rust crate name to scan/build if different from `name`.
+- `version` (string, optional): Package version.
+  - Default: read from `Cargo.toml`
+- `description` (string, optional): Package description.
+- `license` (string, optional): Package license identifier.
+- `repository` (string, optional): Repository URL.
+
+## Targets
+
+All platform-specific configuration lives under `[targets.*]`. Each target can be independently enabled or disabled.
 
 ## Apple
 
-### `[apple]` (optional)
+### `[targets.apple]` (optional)
 
+- `enabled` (bool): Whether this target is active.
+  - Default: `true`
 - `output` (path): Apple artifact root directory.
   - Default: `dist/apple`
 - `deployment_target` (string): iOS deployment target (major.minor).
   - Default: `16.0`
-- `include_macos` (bool): whether `boltffi pack apple` also builds macOS targets.
+- `include_macos` (bool): Whether `boltffi pack apple` also builds macOS targets.
   - Default: `false`
 
-### `[apple.swift]` (optional)
+### `[targets.apple.swift]` (optional)
 
 - `module_name` (string, optional): Swift module name for generated bindings.
   - Default: `PascalCase(package.name)`
-- `output` (path, optional): where Swift bindings are generated.
-  - Default: `{apple.output}/Sources`
+- `output` (path, optional): Where Swift bindings are generated.
+  - Default: `{targets.apple.output}/Sources`
+- `ffi_module_name` (string, optional): Name of the FFI module imported by Swift bindings.
+  - Default: `{xcframework_name}FFI`
 - `tools_version` (string, optional): SwiftPM tools version emitted in `Package.swift`.
   - Default: `5.9`
-- `error_style` (`throwing` | `result`): error surface style in generated Swift.
+- `error_style` (`throwing` | `result`): Error surface style in generated Swift.
   - Default: `throwing`
 
-### `[apple.swift.type_mappings]` (optional)
+### `[targets.apple.swift.type_mappings]` (optional)
 
 Maps custom types to native Swift types. When a custom type has a mapping, the generated Swift code uses the native type instead of a typealias, with automatic conversion at the wire boundary.
 
@@ -52,103 +76,187 @@ Each mapping is a table with:
 
 Example:
 ```toml
-[apple.swift.type_mappings]
+[targets.apple.swift.type_mappings]
 Uuid = { type = "UUID", conversion = "uuid_string" }
 ```
 
-### `[apple.header]` (optional)
+### `[targets.apple.header]` (optional)
 
-- `output` (path, optional): where the generated C header is written.
-  - Default: `{apple.output}/include`
+- `output` (path, optional): Where the generated C header is written.
+  - Default: `{targets.apple.output}/include`
 
-### `[apple.xcframework]` (optional)
+### `[targets.apple.xcframework]` (optional)
 
-- `output` (path, optional): where `{Name}.xcframework` and `{Name}.xcframework.zip` are written.
-  - Default: `{apple.output}`
+- `output` (path, optional): Where `{Name}.xcframework` and `{Name}.xcframework.zip` are written.
+  - Default: `{targets.apple.output}`
 - `name` (string, optional): xcframework base name.
-  - Default: `{apple.swift.module_name}`
+  - Default: `{targets.apple.swift.module_name}`
 
-### `[apple.spm]` (optional)
+### `[targets.apple.spm]` (optional)
 
-- `output` (path, optional): directory where `Package.swift` is written.
-  - Default: `{apple.output}`
-- `distribution` (`local` | `remote`): whether `Package.swift` points at a local `.xcframework` or a remote release `.zip`.
+- `output` (path, optional): Directory where `Package.swift` is written.
+  - Default: `{targets.apple.output}`
+- `distribution` (`local` | `remote`): Whether `Package.swift` points at a local `.xcframework` or a remote release `.zip`.
   - Default: `local`
-- `repo_url` (string, optional): base URL for remote releases (only used for `distribution = "remote"`).
+- `repo_url` (string, conditional): Base URL for remote releases. Required when `distribution = "remote"`.
 - `layout` (`bundled` | `split` | `ffi-only`): SwiftPM layout.
   - Default: `ffi-only`
 - `package_name` (string, optional): SwiftPM package name override.
   - Default:
-    - `layout = "split"`: `{apple.swift.module_name}FFI`
-    - otherwise: `{apple.swift.module_name}`
+    - `layout = "split"`: `{module_name}FFI`
+    - otherwise: `{module_name}`
 - `wrapper_sources` (path, optional): Swift target sources path used by `layout = "bundled"`.
+  - Interpretation: **relative to `targets.apple.spm.output`** when not absolute.
   - Default: `Sources`
+- `skip_package_swift` (bool, optional): Skip generating `Package.swift`.
+  - Default: `false`
 
 ## Android
 
-### `[android]` (optional)
+### `[targets.android]` (optional)
 
+- `enabled` (bool): Whether this target is active.
+  - Default: `true`
 - `output` (path): Android artifact root directory.
   - Default: `dist/android`
 - `min_sdk` (integer): Android minSdkVersion used for packaging.
   - Default: `24`
 - `ndk_version` (string, optional): NDK version hint (used by environment checks).
 
-### `[android.kotlin]` (optional)
+### `[targets.android.kotlin]` (optional)
 
 - `package` (string, optional): Kotlin package for generated sources.
   - Default: `com.example.{package.name}` (with `-` normalized to `_`)
-- `output` (path, optional): output directory for Kotlin sources and JNI glue.
-  - Default: `{android.output}/kotlin`
-- `error_style` (`throwing` | `result`): error surface style in generated Kotlin.
-  - Default: `throwing`
-- `factory_style` (`constructors` | `companion_methods`): how factory constructors are exposed.
+- `output` (path, optional): Output directory for Kotlin sources and JNI glue.
+  - Default: `{targets.android.output}/kotlin`
+- `module_name` (string, optional): Kotlin module/object name.
+  - Default: `PascalCase(package.name)`
+- `library_name` (string, optional): Native library name for `System.loadLibrary`.
+  - Default: inferred from crate name
+- `api_style` (`top_level` | `module_object`): How functions are exposed.
+  - Default: `top_level`
+- `factory_style` (`constructors` | `companion_methods`): How factory constructors are exposed.
   - Default: `constructors`
+- `error_style` (`throwing` | `result`): Error surface style in generated Kotlin.
+  - Default: `throwing`
 
-### `[android.kotlin.type_mappings]` (optional)
+### `[targets.android.kotlin.type_mappings]` (optional)
 
-Maps custom types to native Kotlin/Java types. Same structure as `[apple.swift.type_mappings]`.
+Maps custom types to native Kotlin/Java types. Same structure as `[targets.apple.swift.type_mappings]`.
 
 Example:
 ```toml
-[android.kotlin.type_mappings]
+[targets.android.kotlin.type_mappings]
 Uuid = { type = "java.util.UUID", conversion = "uuid_string" }
 ```
 
-Note: Kotlin type mappings are parsed but not yet implemented in codegen.
+### `[targets.android.header]` (optional)
 
-### `[android.header]` (optional)
+- `output` (path, optional): Where the generated C header is written (used by Android JNI builds).
+  - Default: `{targets.android.output}/include`
 
-- `output` (path, optional): where the generated C header is written (used by Android JNI builds).
-  - Default: `{android.output}/include`
+### `[targets.android.pack]` (optional)
 
-### `[android.pack]` (optional)
+- `output` (path, optional): Where `boltffi pack android` writes the `jniLibs/` folder.
+  - Default: `{targets.android.output}/jniLibs`
 
-- `output` (path, optional): where `boltffi pack android` writes the `jniLibs/` folder.
-  - Default: `{android.output}/jniLibs`
+## WASM
+
+### `[targets.wasm]` (optional)
+
+- `enabled` (bool): Whether this target is active.
+  - Default: `true`
+- `triple` (string): Rust target triple.
+  - Default: `wasm32-unknown-unknown`
+- `profile` (`debug` | `release`): Build profile.
+  - Default: `release`
+- `output` (path): WASM artifact root directory.
+  - Default: `dist/wasm`
+- `artifact_path` (path, optional): Project-root-relative path to built `.wasm` file.
+  - Default: `target/{triple}/{profile}/{package.crate}.wasm`
+
+### `[targets.wasm.optimize]` (optional)
+
+Controls `wasm-opt` optimization pass after build.
+
+- `enabled` (bool): Whether to run `wasm-opt`.
+  - Default: `true` for release, `false` for debug
+- `level` (`0` | `1` | `2` | `3` | `4` | `s` | `z`): Optimization level.
+  - Default: `s`
+- `strip_debug` (bool): Remove debug information.
+  - Default: `true`
+- `on_missing` (`error` | `warn` | `skip`): Behavior when `wasm-opt` is not installed.
+  - Default: `error`
+
+### `[targets.wasm.typescript]` (optional)
+
+- `output` (path, optional): Where TypeScript bindings are generated.
+  - Default: `{targets.wasm.output}/pkg`
+- `runtime_package` (string, optional): Import path for the BoltFFI runtime.
+  - Default: `@boltffi/runtime`
+- `module_name` (string, optional): Base name for generated files.
+  - Default: normalized `{package.name}`
+- `source_map` (bool, optional): Generate source maps.
+  - Default: `true`
+
+### `[targets.wasm.typescript.type_mappings]` (optional)
+
+Maps custom types to native TypeScript types. Same structure as `[targets.apple.swift.type_mappings]`.
+
+Example:
+```toml
+[targets.wasm.typescript.type_mappings]
+Uuid = { type = "string", conversion = "uuid_string" }
+```
+
+### `[targets.wasm.npm]` (optional)
+
+Controls npm package generation in `boltffi pack wasm`.
+
+- `package_name` (string, required for pack): npm package name with optional scope.
+- `output` (path, optional): Where the npm package is assembled.
+  - Default: `{targets.wasm.typescript.output}`
+- `targets` (array of `bundler` | `web` | `nodejs`): Which loader entrypoints to generate.
+  - Default: all three
+  - Validation: must be non-empty
+- `generate_package_json` (bool): Generate `package.json`.
+  - Default: `true`
+- `generate_readme` (bool): Generate `README.md` scaffold.
+  - Default: `true`
+- `version` (string, optional): Package version.
+  - Default: `{package.version}` or from `Cargo.toml`
+- `license` (string, optional): Package license.
+  - Default: `{package.license}`
+- `repository` (string, optional): Package repository URL.
+  - Default: `{package.repository}`
 
 ## Apple SwiftPM layouts
 
 `boltffi pack apple` always produces an xcframework (unless `--spm-only`) and can generate `Package.swift` (unless `--xcframework-only`).
+
+**Swift output precedence:** When running `boltffi generate swift` standalone, bindings are written to `[targets.apple.swift].output`. When running `boltffi pack apple`, output location is layout-specific:
+- `ffi-only`: write to `{spm.output}/Sources/BoltFFIGenerated/{module_name}.swift`
+- `bundled`: write to `{spm.output}/{spm.wrapper_sources}/BoltFFIGenerated/{module_name}.swift`
+- `split`: write to `{swift.output}/BoltFFIGenerated/{module_name}.swift`
 
 ### `layout = "ffi-only"`
 
 Generates a standalone SwiftPM package containing:
 
 - a binary target `{XcframeworkName}FFI`
-- a Swift target `{apple.swift.module_name}` that depends on that binary target
-- generated bindings in `{apple.spm.output}/Sources/BoltFFIGenerated/{apple.swift.module_name}.swift`
+- a Swift target `{module_name}` that depends on that binary target
+- generated bindings in `{spm.output}/Sources/BoltFFIGenerated/{module_name}.swift`
 
 ### `layout = "bundled"`
 
 Generates `Package.swift` that points the Swift target at your existing wrapper sources directory.
 
-- Set `apple.spm.wrapper_sources` to the wrapper target’s source directory.
-- Generated bindings go into `{apple.spm.output}/{apple.spm.wrapper_sources}/BoltFFIGenerated/{apple.swift.module_name}.swift`.
+- Set `spm.wrapper_sources` to the wrapper target's source directory.
+- Generated bindings go into `{spm.output}/{spm.wrapper_sources}/BoltFFIGenerated/{module_name}.swift`.
 
 ### `layout = "split"`
 
 Generates a binary-only SwiftPM package intended to be depended on by a separate wrapper package.
 
 - `Package.swift` exposes only the binary target `{XcframeworkName}FFI`.
-- Generated Swift bindings are written to `{apple.swift.output}/BoltFFIGenerated/{apple.swift.module_name}.swift` so you can include them in your wrapper target.
+- Generated Swift bindings are written to `{swift.output}/BoltFFIGenerated/{module_name}.swift` so you can include them in your wrapper target.

@@ -6,6 +6,7 @@ pub enum Platform {
     IosSimulator,
     MacOs,
     Android,
+    Wasm,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,6 +15,7 @@ pub enum Architecture {
     X86_64,
     Armv7,
     X86,
+    Wasm32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -78,6 +80,12 @@ impl RustTarget {
         architecture: Architecture::X86,
     };
 
+    pub const WASM32_UNKNOWN_UNKNOWN: Self = Self {
+        triple: "wasm32-unknown-unknown",
+        platform: Platform::Wasm,
+        architecture: Architecture::Wasm32,
+    };
+
     pub const ALL_IOS: &'static [Self] =
         &[Self::IOS_ARM64, Self::IOS_SIM_ARM64, Self::IOS_SIM_X86_64];
 
@@ -89,6 +97,8 @@ impl RustTarget {
         Self::ANDROID_X86_64,
         Self::ANDROID_X86,
     ];
+
+    pub const ALL_WASM: &'static [Self] = &[Self::WASM32_UNKNOWN_UNKNOWN];
 
     pub fn triple(&self) -> &'static str {
         self.triple
@@ -104,10 +114,16 @@ impl RustTarget {
 
     pub fn library_path(&self, target_dir: &Path, lib_name: &str, release: bool) -> PathBuf {
         let profile = if release { "release" } else { "debug" };
+        let artifact_name = match self.platform {
+            Platform::Wasm => format!("{}.wasm", lib_name),
+            Platform::Ios | Platform::IosSimulator | Platform::MacOs | Platform::Android => {
+                format!("lib{}.a", lib_name)
+            }
+        };
         target_dir
             .join(self.triple)
             .join(profile)
-            .join(format!("lib{}.a", lib_name))
+            .join(artifact_name)
     }
 }
 
@@ -127,6 +143,7 @@ impl Architecture {
             Architecture::Armv7 => "armeabi-v7a",
             Architecture::X86_64 => "x86_64",
             Architecture::X86 => "x86",
+            Architecture::Wasm32 => unreachable!("wasm targets do not map to android abi"),
         }
     }
 }
@@ -142,7 +159,8 @@ impl BuiltLibrary {
         let all_targets = RustTarget::ALL_IOS
             .iter()
             .chain(RustTarget::ALL_MACOS)
-            .chain(RustTarget::ALL_ANDROID);
+            .chain(RustTarget::ALL_ANDROID)
+            .chain(RustTarget::ALL_WASM);
 
         all_targets
             .filter_map(|target| {

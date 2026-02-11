@@ -122,6 +122,7 @@ impl AndroidAbi {
             Architecture::Armv7 => Some(AndroidAbi::ArmeabiV7a),
             Architecture::X86_64 => Some(AndroidAbi::X86_64),
             Architecture::X86 => Some(AndroidAbi::X86),
+            Architecture::Wasm32 => None,
         }
     }
 }
