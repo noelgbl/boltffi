@@ -29,6 +29,9 @@ import {
   mapStatus,
   processVecI32,
   processVecPoint,
+  asyncAdd,
+  asyncEcho,
+  asyncDoubleAll,
 } from './dist/wasm/pkg/node.js';
 
 await initialized;
@@ -344,5 +347,19 @@ const vecDoubler = { process: (values) => values.map(v => v * 2) };
 const vecResult = processVecI32(vecDoubler, [1, 2, 3, 4, 5]);
 assert(vecResult.length === 5, 'processVecI32 length');
 assert(vecResult[0] === 2 && vecResult[4] === 10, 'processVecI32 values');
+
+console.log('Testing Async Functions...');
+const asyncAddResult = await asyncAdd(3, 4);
+console.log(`  asyncAdd(3, 4) = ${asyncAddResult}`);
+assert(asyncAddResult === 7, 'asyncAdd');
+
+const asyncEchoResult = await asyncEcho('Hello, Async!');
+console.log(`  asyncEcho('Hello, Async!') = "${asyncEchoResult}"`);
+assert(asyncEchoResult === 'Echo: Hello, Async!', 'asyncEcho');
+
+const asyncDoubleResult = await asyncDoubleAll([1, 2, 3, 4, 5]);
+console.log(`  asyncDoubleAll([1,2,3,4,5]) = [${asyncDoubleResult.join(', ')}]`);
+assert(asyncDoubleResult.length === 5, 'asyncDoubleAll length');
+assert(asyncDoubleResult[0] === 2 && asyncDoubleResult[4] === 10, 'asyncDoubleAll values');
 
 console.log('\nAll tests passed!');

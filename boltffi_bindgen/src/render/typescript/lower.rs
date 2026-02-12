@@ -4,7 +4,7 @@ use boltffi_ffi_rules::naming::{self, snake_to_camel as camel_case};
 
 use crate::ir::abi::{
     AbiCall, AbiCallbackInvocation, AbiContract, AbiEnum, AbiEnumPayload, AbiParam, AbiRecord,
-    CallId, CallMode, ErrorTransport, ParamRole, ReturnTransport,
+    AsyncResultTransport, CallId, CallMode, ErrorTransport, ParamRole, ReturnTransport,
 };
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
@@ -18,6 +18,7 @@ use crate::ir::plan::AbiType;
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::render::typescript::emit;
 use crate::render::typescript::plan::*;
+use boltffi_ffi_rules::naming::ffi_prefix;
 
 struct AbiIndex {
     calls: HashMap<CallId, usize>,
@@ -117,6 +118,13 @@ impl<'a> TypeScriptLowerer<'a> {
             .filter_map(|def| self.lower_function(def, &index))
             .collect();
 
+        let async_functions = self
+            .contract
+            .functions
+            .iter()
+            .filter_map(|def| self.lower_async_function(def, &index))
+            .collect();
+
         let wasm_imports = self.collect_wasm_imports(&index);
 
         let callbacks = self
@@ -132,6 +140,7 @@ impl<'a> TypeScriptLowerer<'a> {
             records,
             enums,
             functions,
+            async_functions,
             callbacks,
             wasm_imports,
         }
@@ -373,6 +382,59 @@ impl<'a> TypeScriptLowerer<'a> {
         })
     }
 
+    fn lower_async_function(&self, def: &FunctionDef, index: &AbiIndex) -> Option<TsAsyncFunction> {
+        let call_id = CallId::Function(def.id.clone());
+        let abi_call = index.call(self.abi, &call_id);
+
+        let async_call = match &abi_call.mode {
+            CallMode::Async(async_call) => async_call,
+            _ => return None,
+        };
+
+        let func_name = camel_case(def.id.as_str());
+        let fn_name_snake = naming::to_snake_case(def.id.as_str());
+        let base_ffi_name = format!("{}_{}", ffi_prefix(), fn_name_snake);
+
+        let param_defs: HashMap<&str, &ParamDef> =
+            def.params.iter().map(|p| (p.name.as_str(), p)).collect();
+
+        let params = abi_call
+            .params
+            .iter()
+            .filter(|p| {
+                !matches!(
+                    p.role,
+                    ParamRole::SyntheticLen { .. }
+                        | ParamRole::OutLen { .. }
+                        | ParamRole::StatusOut
+                )
+            })
+            .map(|abi_param| {
+                let param_def = param_defs.get(abi_param.name.as_str()).copied();
+                self.lower_param(param_def, abi_param)
+            })
+            .collect();
+
+        let (return_type, decode_expr) = self.lower_async_result(&async_call.result);
+        let (throws, err_type) = self.lower_error(&async_call.error);
+
+        Some(TsAsyncFunction {
+            name: emit::escape_ts_keyword(&func_name),
+            entry_ffi_name: base_ffi_name.clone(),
+            poll_sync_ffi_name: format!("{}_poll_sync", base_ffi_name),
+            complete_ffi_name: format!("{}_complete", base_ffi_name),
+            panic_message_ffi_name: format!("{}_panic_message", base_ffi_name),
+            cancel_ffi_name: format!("{}_cancel", base_ffi_name),
+            free_ffi_name: format!("{}_free", base_ffi_name),
+            params,
+            return_type,
+            decode_expr,
+            throws,
+            err_type,
+            doc: def.doc.clone(),
+        })
+    }
+
     fn lower_param(&self, param_def: Option<&ParamDef>, abi_param: &AbiParam) -> TsParam {
         let name = camel_case(abi_param.name.as_str());
         match &abi_param.role {
@@ -493,6 +555,47 @@ impl<'a> TypeScriptLowerer<'a> {
                 let err_type = infer_ts_type_from_read_ops(decode_ops);
                 (true, err_type)
             }
+        }
+    }
+
+    fn lower_async_result(&self, result: &AsyncResultTransport) -> (Option<String>, String) {
+        match result {
+            AsyncResultTransport::Void => (None, String::new()),
+            AsyncResultTransport::Direct(abi_type) => {
+                let ts_type = ts_abi_type(abi_type);
+                let read_method = match abi_type {
+                    AbiType::Bool => "reader.readBool()",
+                    AbiType::I8 => "reader.readI8()",
+                    AbiType::U8 => "reader.readU8()",
+                    AbiType::I16 => "reader.readI16()",
+                    AbiType::U16 => "reader.readU16()",
+                    AbiType::I32 => "reader.readI32()",
+                    AbiType::U32 => "reader.readU32()",
+                    AbiType::I64 => "reader.readI64()",
+                    AbiType::U64 => "reader.readU64()",
+                    AbiType::ISize => "reader.readISize()",
+                    AbiType::USize => "reader.readUSize()",
+                    AbiType::F32 => "reader.readF32()",
+                    AbiType::F64 => "reader.readF64()",
+                    AbiType::Void | AbiType::Pointer => "reader.readI32()",
+                };
+                (Some(ts_type), read_method.to_string())
+            }
+            AsyncResultTransport::Encoded { decode_ops, .. } => {
+                let ts_type = infer_ts_type_from_read_ops(decode_ops);
+                let decode_expr = emit::emit_reader_read(decode_ops);
+                (Some(ts_type), decode_expr)
+            }
+            AsyncResultTransport::Handle { class_id, nullable } => {
+                let class_name = naming::to_upper_camel_case(class_id.as_str());
+                let ts_type = if *nullable {
+                    format!("{} | null", class_name)
+                } else {
+                    class_name
+                };
+                (Some(ts_type), "reader.readU32()".to_string())
+            }
+            AsyncResultTransport::Callback { .. } => (None, String::new()),
         }
     }
 

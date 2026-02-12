@@ -1,3 +1,4 @@
+pub mod async_funcs;
 pub mod builtins;
 pub mod bytes;
 pub mod callbacks;
@@ -7,6 +8,7 @@ pub mod primitives;
 pub mod records;
 pub mod results;
 
+pub use async_funcs::*;
 pub use builtins::*;
 pub use bytes::*;
 pub use callbacks::*;

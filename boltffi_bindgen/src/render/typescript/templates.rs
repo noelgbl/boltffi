@@ -99,6 +99,25 @@ pub struct CallbackTemplate<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "render_typescript/async_function.txt", escape = "none")]
+pub struct AsyncFunctionTemplate<'a> {
+    pub name: &'a str,
+    pub params: &'a [TsParam],
+    pub return_type_str: &'a str,
+    pub entry_ffi_name: &'a str,
+    pub poll_sync_ffi_name: &'a str,
+    pub complete_ffi_name: &'a str,
+    pub panic_message_ffi_name: &'a str,
+    pub free_ffi_name: &'a str,
+    pub call_args: &'a str,
+    pub wrapper_code: &'a str,
+    pub cleanup_code: &'a str,
+    pub decode_expr: &'a str,
+    pub has_return: bool,
+    pub doc: &'a Option<String>,
+}
+
+#[derive(Template)]
 #[template(path = "render_typescript/wasm_exports.txt", escape = "none")]
 pub struct WasmExportsTemplate<'a> {
     pub wasm_imports: &'a [TsWasmImportView<'a>],
@@ -197,6 +216,54 @@ impl TypeScriptEmitter {
                     cleanup_code: &cleanup_code,
                     decode_expr: &function.decode_expr,
                     doc: &function.doc,
+                }
+                .render()
+                .unwrap(),
+            );
+            output.push_str("\n\n");
+        }
+
+        for async_function in &module.async_functions {
+            let call_args = async_function
+                .params
+                .iter()
+                .flat_map(|p| p.ffi_args())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let wrapper_code = async_function
+                .params
+                .iter()
+                .filter_map(|p| p.wrapper_code())
+                .collect::<Vec<_>>()
+                .join("\n    ");
+
+            let cleanup_code = async_function
+                .params
+                .iter()
+                .filter_map(|p| p.cleanup_code())
+                .collect::<Vec<_>>()
+                .join("\n    ");
+
+            let return_type_str = async_function.return_type.as_deref().unwrap_or("void");
+            let has_return = async_function.return_type.is_some();
+
+            output.push_str(
+                &AsyncFunctionTemplate {
+                    name: &async_function.name,
+                    params: &async_function.params,
+                    return_type_str,
+                    entry_ffi_name: &async_function.entry_ffi_name,
+                    poll_sync_ffi_name: &async_function.poll_sync_ffi_name,
+                    complete_ffi_name: &async_function.complete_ffi_name,
+                    panic_message_ffi_name: &async_function.panic_message_ffi_name,
+                    free_ffi_name: &async_function.free_ffi_name,
+                    call_args: &call_args,
+                    wrapper_code: &wrapper_code,
+                    cleanup_code: &cleanup_code,
+                    decode_expr: &async_function.decode_expr,
+                    has_return,
+                    doc: &async_function.doc,
                 }
                 .render()
                 .unwrap(),

@@ -29,6 +29,10 @@ pub use ringbuffer::SpscRingBuffer;
 pub use rustfuture::{
     RustFuture, RustFutureContinuationCallback, RustFutureHandle, RustFuturePoll,
 };
+#[cfg(target_arch = "wasm32")]
+pub use rustfuture::{
+    WasmPollStatus, rust_future_panic_message, rust_future_poll_sync,
+};
 pub use safety::catch_ffi_panic;
 pub use status::{FfiStatus, clear_last_error, set_last_error, take_last_error};
 pub use subscription::{

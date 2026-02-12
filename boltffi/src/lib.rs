@@ -13,5 +13,7 @@ pub mod __private {
         rustfuture, set_last_error, wire,
     };
     #[cfg(target_arch = "wasm32")]
-    pub use boltffi_core::WasmCallbackOutBuf;
+    pub use boltffi_core::{
+        WasmCallbackOutBuf, rust_future_panic_message, rust_future_poll_sync,
+    };
 }

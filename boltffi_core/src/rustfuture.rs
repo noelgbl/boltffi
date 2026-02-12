@@ -5,6 +5,20 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WasmPollStatus {
+    Pending = 0,
+    Ready = 1,
+    Cancelled = -1,
+    Panicked = -2,
+}
+
+#[cfg(target_arch = "wasm32")]
+unsafe extern "C" {
+    fn __boltffi_wake(handle: u32);
+}
+
 #[repr(i8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RustFuturePoll {
@@ -212,20 +226,44 @@ impl AtomicContinuationScheduler {
 unsafe impl Send for AtomicContinuationScheduler {}
 unsafe impl Sync for AtomicContinuationScheduler {}
 
+#[derive(Debug)]
+pub enum TerminalState {
+    Ready,
+    Cancelled,
+    Panicked(String),
+}
+
+#[allow(dead_code)]
 enum FutureExecutionState<T> {
     Running(Pin<Box<dyn Future<Output = T> + Send + 'static>>),
     Complete(T),
+    Panicked(String),
     Consumed,
 }
 
 impl<T> FutureExecutionState<T> {
     fn is_finished(&self) -> bool {
-        matches!(self, Self::Complete(_) | Self::Consumed)
+        matches!(self, Self::Complete(_) | Self::Panicked(_) | Self::Consumed)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn is_panicked(&self) -> bool {
+        matches!(self, Self::Panicked(_))
     }
 
     fn take_result(&mut self) -> Option<T> {
         match std::mem::replace(self, Self::Consumed) {
             Self::Complete(result) => Some(result),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+
+    fn take_panic_message(&mut self) -> Option<String> {
+        match std::mem::replace(self, Self::Consumed) {
+            Self::Panicked(msg) => Some(msg),
             other => {
                 *self = other;
                 None
@@ -297,12 +335,56 @@ impl<T: Send + 'static> RustFuture<T> {
         self.future_execution_state.lock().unwrap().take_result()
     }
 
+    pub fn panic_message(&self) -> Option<String> {
+        self.future_execution_state
+            .lock()
+            .unwrap()
+            .take_panic_message()
+    }
+
     pub fn cancel(&self) {
         self.continuation_scheduler.mark_cancelled();
     }
 
     pub fn free(self: Arc<Self>) {
         self.continuation_scheduler.mark_cancelled();
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn poll_sync(self: &Arc<Self>) -> WasmPollStatus {
+        if self.continuation_scheduler.is_cancelled() {
+            return WasmPollStatus::Cancelled;
+        }
+
+        let waker = self.clone().create_wasm_waker();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.poll_future_once(&waker)
+        }));
+
+        match result {
+            Ok(true) => {
+                let state = self.future_execution_state.lock().unwrap();
+                if state.is_panicked() {
+                    WasmPollStatus::Panicked
+                } else {
+                    WasmPollStatus::Ready
+                }
+            }
+            Ok(false) => WasmPollStatus::Pending,
+            Err(panic_payload) => {
+                let message = panic_payload_to_string(panic_payload);
+                *self.future_execution_state.lock().unwrap() =
+                    FutureExecutionState::Panicked(message);
+                WasmPollStatus::Panicked
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn create_wasm_waker(self: Arc<Self>) -> Waker {
+        let handle = Arc::into_raw(self) as u32;
+        let raw_waker = RawWaker::new(handle as *const (), &WASM_WAKER_VTABLE);
+        unsafe { Waker::from_raw(raw_waker) }
     }
 
     fn create_waker(self: Arc<Self>) -> Waker {
@@ -317,6 +399,51 @@ const RUST_FUTURE_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
     waker_wake_by_ref_fn::<()>,
     waker_drop_fn::<()>,
 );
+
+#[cfg(target_arch = "wasm32")]
+const WASM_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
+    wasm_waker_clone,
+    wasm_waker_wake,
+    wasm_waker_wake_by_ref,
+    wasm_waker_drop,
+);
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_waker_clone(data: *const ()) -> RawWaker {
+    let handle = data as u32;
+    unsafe { Arc::increment_strong_count(handle as *const RustFuture<()>) };
+    RawWaker::new(data, &WASM_WAKER_VTABLE)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_waker_wake(data: *const ()) {
+    let handle = data as u32;
+    unsafe { __boltffi_wake(handle) };
+    unsafe { Arc::decrement_strong_count(handle as *const RustFuture<()>) };
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_waker_wake_by_ref(data: *const ()) {
+    let handle = data as u32;
+    unsafe { __boltffi_wake(handle) };
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_waker_drop(data: *const ()) {
+    let handle = data as u32;
+    unsafe { Arc::decrement_strong_count(handle as *const RustFuture<()>) };
+}
+
+#[cfg(target_arch = "wasm32")]
+fn panic_payload_to_string(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        return (*s).to_string();
+    }
+    if let Some(s) = payload.downcast_ref::<String>() {
+        return s.clone();
+    }
+    "unknown panic".to_string()
+}
 
 fn waker_clone_fn<T: Send + 'static>(waker_data_ptr: *const ()) -> RawWaker {
     unsafe { Arc::increment_strong_count(waker_data_ptr as *const RustFuture<T>) };
@@ -377,4 +504,20 @@ pub unsafe fn rust_future_cancel<T: Send + 'static>(handle: RustFutureHandle) {
 pub unsafe fn rust_future_free<T: Send + 'static>(handle: RustFutureHandle) {
     let rust_future_arc = unsafe { Arc::from_raw(handle as *const RustFuture<T>) };
     rust_future_arc.free();
+}
+
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn rust_future_poll_sync<T: Send + 'static>(handle: RustFutureHandle) -> i32 {
+    let rust_future_arc = unsafe { Arc::from_raw(handle as *const RustFuture<T>) };
+    let status = rust_future_arc.poll_sync();
+    std::mem::forget(rust_future_arc);
+    status as i32
+}
+
+#[cfg(target_arch = "wasm32")]
+pub unsafe fn rust_future_panic_message<T: Send + 'static>(handle: RustFutureHandle) -> Option<String> {
+    let rust_future_arc = unsafe { Arc::from_raw(handle as *const RustFuture<T>) };
+    let message = rust_future_arc.panic_message();
+    std::mem::forget(rust_future_arc);
+    message
 }

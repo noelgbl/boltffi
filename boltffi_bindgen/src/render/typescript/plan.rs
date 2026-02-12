@@ -9,8 +9,26 @@ pub struct TsModule {
     pub records: Vec<TsRecord>,
     pub enums: Vec<TsEnum>,
     pub functions: Vec<TsFunction>,
+    pub async_functions: Vec<TsAsyncFunction>,
     pub callbacks: Vec<TsCallback>,
     pub wasm_imports: Vec<TsWasmImport>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TsAsyncFunction {
+    pub name: String,
+    pub entry_ffi_name: String,
+    pub poll_sync_ffi_name: String,
+    pub complete_ffi_name: String,
+    pub panic_message_ffi_name: String,
+    pub cancel_ffi_name: String,
+    pub free_ffi_name: String,
+    pub params: Vec<TsParam>,
+    pub return_type: Option<String>,
+    pub decode_expr: String,
+    pub throws: bool,
+    pub err_type: String,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]

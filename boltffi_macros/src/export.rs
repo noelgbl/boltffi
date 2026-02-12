@@ -289,7 +289,10 @@ fn generate_async_export(
     let base_name = format!("{}_{}", naming::ffi_prefix(), fn_name);
     let entry_ident = syn::Ident::new(&base_name, fn_name.span());
     let poll_ident = syn::Ident::new(&format!("{}_poll", base_name), fn_name.span());
+    let poll_sync_ident = syn::Ident::new(&format!("{}_poll_sync", base_name), fn_name.span());
     let complete_ident = syn::Ident::new(&format!("{}_complete", base_name), fn_name.span());
+    let panic_message_ident =
+        syn::Ident::new(&format!("{}_panic_message", base_name), fn_name.span());
     let cancel_ident = syn::Ident::new(&format!("{}_cancel", base_name), fn_name.span());
     let free_ident = syn::Ident::new(&format!("{}_free", base_name), fn_name.span());
 
@@ -334,7 +337,8 @@ fn generate_async_export(
         }
     };
 
-    let complete_fn = quote! {
+    let native_complete_fn = quote! {
+        #[cfg(not(target_arch = "wasm32"))]
         #[unsafe(no_mangle)]
         #fn_vis unsafe extern "C" fn #complete_ident(
             handle: ::boltffi::__private::RustFutureHandle,
@@ -350,11 +354,27 @@ fn generate_async_export(
         }
     };
 
-    let expanded = quote! {
-        #fn_vis async fn #fn_name(#fn_inputs) #fn_output #fn_block
+    let wasm_complete_fn = quote! {
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        #fn_vis unsafe extern "C" fn #complete_ident(
+            out: *mut ::boltffi::__private::FfiBuf<u8>,
+            handle: ::boltffi::__private::RustFutureHandle,
+            _out_status: *mut ::boltffi::__private::FfiStatus,
+        ) {
+            if out.is_null() {
+                return;
+            }
+            let buf = match ::boltffi::__private::rustfuture::rust_future_complete::<#rust_return_type>(handle) {
+                Some(result) => ::boltffi::__private::FfiBuf::wire_encode(&result),
+                None => ::boltffi::__private::FfiBuf::empty(),
+            };
+            out.write(buf);
+        }
+    };
 
-        #entry_fn
-
+    let native_poll_fn = quote! {
+        #[cfg(not(target_arch = "wasm32"))]
         #[unsafe(no_mangle)]
         #fn_vis extern "C" fn #poll_ident(
             handle: ::boltffi::__private::RustFutureHandle,
@@ -363,8 +383,42 @@ fn generate_async_export(
         ) {
             unsafe { ::boltffi::__private::rustfuture::rust_future_poll::<#rust_return_type>(handle, callback, callback_data) }
         }
+    };
 
-        #complete_fn
+    let wasm_poll_fn = quote! {
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        #fn_vis extern "C" fn #poll_sync_ident(
+            handle: ::boltffi::__private::RustFutureHandle,
+        ) -> i32 {
+            unsafe { ::boltffi::__private::rust_future_poll_sync::<#rust_return_type>(handle) }
+        }
+    };
+
+    let wasm_panic_message_fn = quote! {
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        #fn_vis unsafe extern "C" fn #panic_message_ident(
+            handle: ::boltffi::__private::RustFutureHandle,
+        ) -> ::boltffi::__private::FfiBuf<u8> {
+            match ::boltffi::__private::rust_future_panic_message::<#rust_return_type>(handle) {
+                Some(message) => ::boltffi::__private::FfiBuf::wire_encode(&message),
+                None => ::boltffi::__private::FfiBuf::empty(),
+            }
+        }
+    };
+
+    let expanded = quote! {
+        #fn_vis async fn #fn_name(#fn_inputs) #fn_output #fn_block
+
+        #entry_fn
+
+        #native_poll_fn
+        #wasm_poll_fn
+        #wasm_panic_message_fn
+
+        #native_complete_fn
+        #wasm_complete_fn
 
         #[unsafe(no_mangle)]
         #fn_vis extern "C" fn #cancel_ident(handle: ::boltffi::__private::RustFutureHandle) {
