@@ -2,23 +2,23 @@
 export async function {{ name }}({% for p in params %}{{ p.name }}: {{ p.ts_type }}{% if !loop.last %}, {% endif %}{% endfor %}): Promise<{{ return_type_str }}> {
 {% if !wrapper_code.is_empty() %}  {{ wrapper_code }}
 {% endif %}
-  const handle = (_module.exports.{{ entry_ffi_name }} as Function)({{ call_args }});
+  const handle = (_exports.{{ entry_ffi_name }} as Function)({{ call_args }});
 {% if !cleanup_code.is_empty() %}  {{ cleanup_code }}
 {% endif %}
 
   const awaitedHandle = await _module.asyncManager.pollAsync(
     handle,
-    (h: number) => (_module.exports.{{ poll_sync_ffi_name }} as Function)(h),
-    (h: number) => (_module.exports.{{ panic_message_ffi_name }} as Function)(h),
-    (h: number) => (_module.exports.{{ free_ffi_name }} as Function)(h)
+    (h: number) => (_exports.{{ poll_sync_ffi_name }} as Function)(h),
+    (h: number) => (_exports.{{ panic_message_ffi_name }} as Function)(h),
+    (h: number) => (_exports.{{ free_ffi_name }} as Function)(h)
   );
 
 {% if has_return %}  const outPtr = _module.allocBufDescriptor();
-  (_module.exports.{{ complete_ffi_name }} as Function)(outPtr, awaitedHandle, 0);
+  (_exports.{{ complete_ffi_name }} as Function)(outPtr, awaitedHandle, 0);
   const reader = _module.readerFromBuf(outPtr);
   const result = {{ decode_expr }};
   _module.freeBuf(outPtr);
-  (_module.exports.{{ free_ffi_name }} as Function)(awaitedHandle);
+  (_exports.{{ free_ffi_name }} as Function)(awaitedHandle);
   return result;
-{% else %}  (_module.exports.{{ free_ffi_name }} as Function)(awaitedHandle);
+{% else %}  (_exports.{{ free_ffi_name }} as Function)(awaitedHandle);
 {% endif %}}

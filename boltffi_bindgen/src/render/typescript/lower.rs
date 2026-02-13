@@ -217,7 +217,7 @@ impl<'a> TypeScriptLowerer<'a> {
         let decode_fields = record_decode_fields(abi_record);
         let encode_fields = record_encode_fields(abi_record);
 
-        let fields = def
+        let fields: Vec<TsField> = def
             .fields
             .iter()
             .map(|field| {
@@ -251,11 +251,25 @@ impl<'a> TypeScriptLowerer<'a> {
             })
             .collect();
 
+        let tail_padding = if abi_record.is_blittable {
+            let packed_size: usize = fields
+                .iter()
+                .map(|f| match f.encode.size {
+                    SizeExpr::Fixed(n) => n,
+                    _ => 0,
+                })
+                .sum();
+            abi_record.size.unwrap_or(0).saturating_sub(packed_size)
+        } else {
+            0
+        };
+
         TsRecord {
             name,
             fields,
             is_blittable: abi_record.is_blittable,
             wire_size: abi_record.size,
+            tail_padding,
             doc: def.doc.clone(),
         }
     }

@@ -14,10 +14,25 @@ const {{ name }}Codec: WireCodec<{{ name }}> = {
 {%- for field in fields %}
     {{ field.wire_encode_expr("writer", "v") }};
 {%- endfor %}
+{%- if tail_padding > 0 %}
+    writer.skip({{ tail_padding }});
+{%- endif %}
   },
-  decode: (reader) => ({
+  decode: (reader) => {
+{%- if tail_padding > 0 %}
+    const result = {
 {%- for field in fields %}
-    {{ field.name }}: {{ field.wire_decode_expr() }},
+      {{ field.name }}: {{ field.wire_decode_expr() }},
 {%- endfor %}
-  }),
+    };
+    reader.skip({{ tail_padding }});
+    return result;
+{%- else %}
+    return {
+{%- for field in fields %}
+      {{ field.name }}: {{ field.wire_decode_expr() }},
+{%- endfor %}
+    };
+{%- endif %}
+  },
 };

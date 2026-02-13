@@ -266,7 +266,9 @@ fn generate_typescript(config: &Config, output: Option<PathBuf>) -> Result<()> {
     }
 
     let output_dir = output.unwrap_or_else(|| config.wasm_typescript_output());
-    let output_path = output_dir.join(format!("{}.ts", config.wasm_typescript_module_name()));
+    let module_name = config.wasm_typescript_module_name();
+    let output_path = output_dir.join(format!("{}.ts", module_name));
+    let node_output_path = output_dir.join(format!("{}_node.ts", module_name));
 
     std::fs::create_dir_all(&output_dir).map_err(|source| CliError::CreateDirectoryFailed {
         path: output_dir.clone(),
@@ -289,6 +291,7 @@ fn generate_typescript(config: &Config, output: Option<PathBuf>) -> Result<()> {
     let ts_module =
         TypeScriptLowerer::new(&contract, &abi_contract, crate_name.to_string()).lower();
     let runtime_package = config.wasm_runtime_package();
+    
     let ts_code = TypeScriptEmitter::emit(&ts_module).replacen(
         "from \"@boltffi/runtime\"",
         &format!("from \"{}\"", runtime_package),
@@ -300,6 +303,18 @@ fn generate_typescript(config: &Config, output: Option<PathBuf>) -> Result<()> {
         source,
     })?;
 
+    let node_ts_code = TypeScriptEmitter::emit_node(&ts_module, &module_name).replacen(
+        "from \"@boltffi/runtime\"",
+        &format!("from \"{}\"", runtime_package),
+        1,
+    );
+
+    std::fs::write(&node_output_path, &node_ts_code).map_err(|source| CliError::WriteFailed {
+        path: node_output_path.clone(),
+        source,
+    })?;
+
     println!("Generated: {}", output_path.display());
+    println!("Generated: {}", node_output_path.display());
     Ok(())
 }

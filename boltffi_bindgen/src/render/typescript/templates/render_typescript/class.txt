@@ -3,7 +3,7 @@ const _{{ cls.class_name }}Finalizer: FinalizationRegistry<number> | null =
   typeof FinalizationRegistry === "undefined"
     ? null
     : new FinalizationRegistry<number>((handle) => {
-        (_module.exports.{{ cls.ffi_free }} as Function)(handle);
+        (_exports.{{ cls.ffi_free }} as Function)(handle);
       });
 
 export class {{ cls.class_name }} {
@@ -33,7 +33,7 @@ export class {{ cls.class_name }} {
     }
     this._disposed = true;
     _{{ cls.class_name }}Finalizer?.unregister(this);
-    (_module.exports.{{ cls.ffi_free }} as Function)(this._handle);
+    (_exports.{{ cls.ffi_free }} as Function)(this._handle);
     this._handle = 0;
   }
 
@@ -49,7 +49,7 @@ export class {{ cls.class_name }} {
     {{ constructor.wrapper_code() }}
 {%- endif %}
 {%- if constructor.cleanup_code().is_empty() %}
-    const handle = (_module.exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }});
+    const handle = (_exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }});
 {%- if constructor.returns_nullable_handle %}
     if (handle === 0) {
       return null;
@@ -58,7 +58,7 @@ export class {{ cls.class_name }} {
     return {{ cls.class_name }}._fromHandle(handle);
 {%- else %}
     try {
-      const handle = (_module.exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }});
+      const handle = (_exports.{{ constructor.ffi_name }} as Function)({{ constructor.ffi_call_args() }});
 {%- if constructor.returns_nullable_handle %}
       if (handle === 0) {
         return null;
@@ -85,10 +85,10 @@ export class {{ cls.class_name }} {
 {%- when TsClassMethodMode::Sync with (sync_method) %}
 {%- match sync_method.return_abi %}
 {%- when TsReturnAbi::Void %}
-    (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
+    (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
 {%- when TsReturnAbi::Direct with { ts_cast } %}
 {%- if let Some(handle_return) = method.return_handle %}
-    const result = (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
+    const result = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
 {%- if handle_return.nullable %}
     if (result === 0) {
       return null;
@@ -96,13 +96,13 @@ export class {{ cls.class_name }} {
 {%- endif %}
     return {{ handle_return.class_name }}._fromHandle(result);
 {%- else %}
-    return (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}){{ ts_cast }};
+    return (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}){{ ts_cast }};
 {%- endif %}
 {%- when TsReturnAbi::WireEncoded %}
     const outPtr = _module.allocBufDescriptor();
     let callCompleted = false;
     try {
-      (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args_with_out() }});
+      (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args_with_out() }});
       callCompleted = true;
       const reader = _module.readerFromBuf(outPtr);
       const result = {{ sync_method.decode_expr }};
@@ -116,19 +116,19 @@ export class {{ cls.class_name }} {
     }
 {%- endmatch %}
 {%- when TsClassMethodMode::Async with (async_method) %}
-    const handle = (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
+    const handle = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
     const awaitedHandle = await _module.asyncManager.pollAsync(
       handle,
-      (futureHandle: number) => (_module.exports.{{ async_method.poll_sync_ffi_name }} as Function)(futureHandle),
-      (futureHandle: number) => (_module.exports.{{ async_method.panic_message_ffi_name }} as Function)(futureHandle),
-      (futureHandle: number) => (_module.exports.{{ async_method.free_ffi_name }} as Function)(futureHandle)
+      (futureHandle: number) => (_exports.{{ async_method.poll_sync_ffi_name }} as Function)(futureHandle),
+      (futureHandle: number) => (_exports.{{ async_method.panic_message_ffi_name }} as Function)(futureHandle),
+      (futureHandle: number) => (_exports.{{ async_method.free_ffi_name }} as Function)(futureHandle)
     );
 {%- match method.return_type %}
 {%- when Some with (t) %}
     const outPtr = _module.allocBufDescriptor();
     let completeCompleted = false;
     try {
-      (_module.exports.{{ async_method.complete_ffi_name }} as Function)(outPtr, awaitedHandle, 0);
+      (_exports.{{ async_method.complete_ffi_name }} as Function)(outPtr, awaitedHandle, 0);
       completeCompleted = true;
       const reader = _module.readerFromBuf(outPtr);
       const result = {{ async_method.decode_expr }};
@@ -148,10 +148,10 @@ export class {{ cls.class_name }} {
       } else {
         _module.freeBufDescriptor(outPtr);
       }
-      (_module.exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
+      (_exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
     }
 {%- when None %}
-    (_module.exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
+    (_exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
 {%- endmatch %}
 {%- endmatch %}
 {%- else %}
@@ -160,10 +160,10 @@ export class {{ cls.class_name }} {
     try {
 {%- match sync_method.return_abi %}
 {%- when TsReturnAbi::Void %}
-      (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
+      (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
 {%- when TsReturnAbi::Direct with { ts_cast } %}
 {%- if let Some(handle_return) = method.return_handle %}
-      const result = (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
+      const result = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
 {%- if handle_return.nullable %}
       if (result === 0) {
         return null;
@@ -171,13 +171,13 @@ export class {{ cls.class_name }} {
 {%- endif %}
       return {{ handle_return.class_name }}._fromHandle(result);
 {%- else %}
-      return (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}){{ ts_cast }};
+      return (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}){{ ts_cast }};
 {%- endif %}
 {%- when TsReturnAbi::WireEncoded %}
       const outPtr = _module.allocBufDescriptor();
       let callCompleted = false;
       try {
-        (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args_with_out() }});
+        (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args_with_out() }});
         callCompleted = true;
         const reader = _module.readerFromBuf(outPtr);
         const result = {{ sync_method.decode_expr }};
@@ -196,23 +196,23 @@ export class {{ cls.class_name }} {
 {%- when TsClassMethodMode::Async with (async_method) %}
     const handle = (() => {
       try {
-        return (_module.exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
+        return (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
       } finally {
         {{ method.cleanup_code() }}
       }
     })();
     const awaitedHandle = await _module.asyncManager.pollAsync(
       handle,
-      (futureHandle: number) => (_module.exports.{{ async_method.poll_sync_ffi_name }} as Function)(futureHandle),
-      (futureHandle: number) => (_module.exports.{{ async_method.panic_message_ffi_name }} as Function)(futureHandle),
-      (futureHandle: number) => (_module.exports.{{ async_method.free_ffi_name }} as Function)(futureHandle)
+      (futureHandle: number) => (_exports.{{ async_method.poll_sync_ffi_name }} as Function)(futureHandle),
+      (futureHandle: number) => (_exports.{{ async_method.panic_message_ffi_name }} as Function)(futureHandle),
+      (futureHandle: number) => (_exports.{{ async_method.free_ffi_name }} as Function)(futureHandle)
     );
 {%- match method.return_type %}
 {%- when Some with (t) %}
     const outPtr = _module.allocBufDescriptor();
     let completeCompleted = false;
     try {
-      (_module.exports.{{ async_method.complete_ffi_name }} as Function)(outPtr, awaitedHandle, 0);
+      (_exports.{{ async_method.complete_ffi_name }} as Function)(outPtr, awaitedHandle, 0);
       completeCompleted = true;
       const reader = _module.readerFromBuf(outPtr);
       const result = {{ async_method.decode_expr }};
@@ -232,10 +232,10 @@ export class {{ cls.class_name }} {
       } else {
         _module.freeBufDescriptor(outPtr);
       }
-      (_module.exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
+      (_exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
     }
 {%- when None %}
-    (_module.exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
+    (_exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
 {%- endmatch %}
 {%- endmatch %}
 {%- endif %}

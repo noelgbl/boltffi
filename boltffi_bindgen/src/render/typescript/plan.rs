@@ -252,6 +252,7 @@ pub struct TsRecord {
     pub fields: Vec<TsField>,
     pub is_blittable: bool,
     pub wire_size: Option<usize>,
+    pub tail_padding: usize,
     pub doc: Option<String>,
 }
 

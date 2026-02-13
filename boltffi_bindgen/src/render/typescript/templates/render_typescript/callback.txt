@@ -50,7 +50,7 @@ export function register{{ callback.interface_name }}(impl: {{ callback.interfac
   const id = _{{ callback.trait_name_snake }}_next_id++;
   _{{ callback.trait_name_snake }}_registry.set(id, impl);
   _{{ callback.trait_name_snake }}_ref_counts.set(id, 1);
-  return (_module.exports.{{ callback.create_handle_fn }} as Function)(id);
+  return (_exports.{{ callback.create_handle_fn }} as Function)(id);
 }
 
 export function unregister{{ callback.interface_name }}(handle: number): void {
@@ -96,7 +96,7 @@ _callbackImports["{{ method.import_name }}"] = (handle: number, out_ptr: number{
 
 {%- for method in callback.async_methods %}
 _callbackImports["{{ method.start_import_name }}"] = (handle: number, requestId: number{% for param in method.params %}{% match param.kind %}{% when TsCallbackParamKind::Primitive with { import_ts_type, .. } %}, {{ param.name }}: {{ import_ts_type }}{% when TsCallbackParamKind::WireEncoded with { .. } %}, {{ param.name }}_ptr: number, {{ param.name }}_len: number{% endmatch %}{% endfor %}): void => {
-  const complete = _module.exports.{{ method.complete_export_name }} as Function;
+  const complete = _exports.{{ method.complete_export_name }} as Function;
   const completeError = (err: unknown): void => {
     const errMsg = err instanceof Error ? err.message : String(err);
     const errWriter = _module.allocWriter(4 + errMsg.length * 3);
