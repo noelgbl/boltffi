@@ -1,17 +1,34 @@
 use boltffi_ffi_rules::naming;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::ItemFn;
+use syn::{ItemFn, Type};
 
 use crate::callback_registry;
 use crate::custom_types;
-use crate::params::{transform_params, transform_params_async, FfiParams};
+use crate::params::{FfiParams, transform_params, transform_params_async};
 use crate::returns::{
-    classify_async_return_abi, classify_return, get_async_complete_conversion,
-    get_async_default_ffi_value, get_async_ffi_return_type, get_async_rust_return_type,
-    OptionReturnAbi, ReturnKind,
+    OptionReturnAbi, ReturnKind, classify_async_return_abi, classify_return, extract_vec_inner,
+    get_async_complete_conversion, get_async_default_ffi_value, get_async_ffi_return_type,
+    get_async_rust_return_type,
 };
 use crate::safety;
+use crate::wire_gen::is_primitive_type;
+
+fn is_blittable_vec(ty: &Type) -> bool {
+    extract_vec_inner(ty).is_some_and(|inner| is_primitive_type(&inner))
+}
+
+fn is_string_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(type_path) => type_path
+            .path
+            .segments
+            .last()
+            .map(|seg| seg.ident == "String")
+            .unwrap_or(false),
+        _ => false,
+    }
+}
 
 fn should_wire_encode(kind: &ReturnKind) -> bool {
     matches!(
@@ -60,56 +77,20 @@ fn convert_to_wire_encoded(kind: ReturnKind) -> ReturnKind {
     }
 }
 
-enum StringReturnTransport {
-    WasmPacked,
-    WireEncoded,
-}
-
-struct StringReturnBodies {
-    wasm: proc_macro2::TokenStream,
-    non_wasm: proc_macro2::TokenStream,
-}
-
-fn build_string_return_body(
-    call_expr: proc_macro2::TokenStream,
-    conversions: &[proc_macro2::TokenStream],
-    transport: StringReturnTransport,
-) -> proc_macro2::TokenStream {
-    let conversion_steps = quote! { #(#conversions)* };
-    match transport {
-        StringReturnTransport::WasmPacked => {
-            quote! {
-                #conversion_steps
-                let __boltffi_string_result: String = #call_expr;
-                ::boltffi::__private::wasm_string_into_packed(__boltffi_string_result)
-            }
-        }
-        StringReturnTransport::WireEncoded => {
-            quote! {
-                #conversion_steps
-                let __boltffi_string_result: String = #call_expr;
-                ::boltffi::__private::FfiBuf::wire_encode(&__boltffi_string_result)
-            }
-        }
-    }
-}
-
-fn build_string_return_exports(
+fn build_encoded_return_exports(
     input: &ItemFn,
     fn_vis: &syn::Visibility,
     export_ident: &syn::Ident,
     ffi_params: &[proc_macro2::TokenStream],
-    bodies: StringReturnBodies,
+    encode_body: proc_macro2::TokenStream,
 ) -> TokenStream {
-    let wasm_body = bodies.wasm;
-    let non_wasm_body = bodies.non_wasm;
-
     let wasm_export = match ffi_params.is_empty() {
         true => quote! {
             #[cfg(target_arch = "wasm32")]
             #[unsafe(no_mangle)]
             #fn_vis extern "C" fn #export_ident() -> u64 {
-                #wasm_body
+                let __boltffi_buf: ::boltffi::__private::FfiBuf<u8> = { #encode_body };
+                __boltffi_buf.into_packed()
             }
         },
         false => quote! {
@@ -118,7 +99,8 @@ fn build_string_return_exports(
             #fn_vis unsafe extern "C" fn #export_ident(
                 #(#ffi_params),*
             ) -> u64 {
-                #wasm_body
+                let __boltffi_buf: ::boltffi::__private::FfiBuf<u8> = { #encode_body };
+                __boltffi_buf.into_packed()
             }
         },
     };
@@ -128,7 +110,7 @@ fn build_string_return_exports(
             #[cfg(not(target_arch = "wasm32"))]
             #[unsafe(no_mangle)]
             #fn_vis extern "C" fn #export_ident() -> ::boltffi::__private::FfiBuf<u8> {
-                #non_wasm_body
+                #encode_body
             }
         },
         false => quote! {
@@ -137,7 +119,7 @@ fn build_string_return_exports(
             #fn_vis unsafe extern "C" fn #export_ident(
                 #(#ffi_params),*
             ) -> ::boltffi::__private::FfiBuf<u8> {
-                #non_wasm_body
+                #encode_body
             }
         },
     };
@@ -190,23 +172,6 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
     let has_conversions = !conversions.is_empty();
 
     let raw_return_kind = classify_return(fn_output);
-
-    if matches!(&raw_return_kind, ReturnKind::String) {
-        let call_expr = quote! { #fn_name(#(#call_args),*) };
-        let bodies = StringReturnBodies {
-            wasm: build_string_return_body(
-                call_expr.clone(),
-                &conversions,
-                StringReturnTransport::WasmPacked,
-            ),
-            non_wasm: build_string_return_body(
-                call_expr,
-                &conversions,
-                StringReturnTransport::WireEncoded,
-            ),
-        };
-        return build_string_return_exports(&input, fn_vis, &export_ident, &ffi_params, bodies);
-    }
 
     let return_kind = if should_wire_encode(&raw_return_kind) {
         convert_to_wire_encoded(raw_return_kind)
@@ -288,10 +253,25 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
             let needs_custom = custom_types::contains_custom_types(&inner_ty, &custom_types);
             let result_ident = syn::Ident::new("result", fn_name.span());
 
+            // fast paths that reuse memory directly without allocating/copying:
+            // - vec<primitive>: from_raw_vec reuses the vec's buffer
+            // - string: from_vec(into_bytes()) reuses the string's buffer
+            let encode_body = if is_blittable_vec(&inner_ty) {
+                quote! {
+                    #(#conversions)*
+                    let #result_ident: #inner_ty = #fn_name(#(#call_args),*);
+                    ::boltffi::__private::FfiBuf::from_raw_vec(#result_ident)
+                }
+            } else if is_string_type(&inner_ty) {
+                quote! {
+                    #(#conversions)*
+                    let #result_ident: #inner_ty = #fn_name(#(#call_args),*);
+                    ::boltffi::__private::FfiBuf::from_vec(#result_ident.into_bytes())
+                }
             // custom types like UtcDateTime have to be converted to their
             // underlying repr (e.g. i64) before wire encoding, the wire
             // format does not know about the custom type itself
-            let encode_body = if needs_custom {
+            } else if needs_custom {
                 let wire_ty = custom_types::wire_type_for(&inner_ty, &custom_types);
                 let wire_value_ident = syn::Ident::new("__boltffi_wire_value", fn_name.span());
                 let to_wire =
@@ -310,63 +290,13 @@ pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
                 }
             };
 
-            let wasm_export = if has_params {
-                quote! {
-                    #[cfg(target_arch = "wasm32")]
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #export_ident(
-                        out: *mut ::boltffi::__private::FfiBuf<u8>,
-                        #(#ffi_params),*
-                    ) {
-                        if out.is_null() {
-                            return;
-                        }
-                        let __boltffi_encoded: ::boltffi::__private::FfiBuf<u8> = { #encode_body };
-                        out.write(__boltffi_encoded);
-                    }
-                }
-            } else {
-                quote! {
-                    #[cfg(target_arch = "wasm32")]
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #export_ident(
-                        out: *mut ::boltffi::__private::FfiBuf<u8>
-                    ) {
-                        if out.is_null() {
-                            return;
-                        }
-                        let __boltffi_encoded: ::boltffi::__private::FfiBuf<u8> = { #encode_body };
-                        out.write(__boltffi_encoded);
-                    }
-                }
-            };
-
-            let non_wasm_export = if has_params {
-                quote! {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    #[unsafe(no_mangle)]
-                    #fn_vis unsafe extern "C" fn #export_ident(
-                        #(#ffi_params),*
-                    ) -> ::boltffi::__private::FfiBuf<u8> {
-                        #encode_body
-                    }
-                }
-            } else {
-                quote! {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    #[unsafe(no_mangle)]
-                    #fn_vis extern "C" fn #export_ident() -> ::boltffi::__private::FfiBuf<u8> {
-                        #encode_body
-                    }
-                }
-            };
-
-            quote! {
-                #input
-
-                #wasm_export
-                #non_wasm_export
-            }
+            return build_encoded_return_exports(
+                &input,
+                fn_vis,
+                &export_ident,
+                &ffi_params,
+                encode_body,
+            );
         }
         ReturnKind::String
         | ReturnKind::ResultString { .. }

@@ -98,25 +98,13 @@ export class {{ cls.class_name }} {
 {%- else %}
     return (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}){{ ts_cast }};
 {%- endif %}
-{%- when TsReturnAbi::WireEncoded %}
-    const outPtr = _module.allocBufDescriptor();
-    let callCompleted = false;
-    try {
-      (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args_with_out() }});
-      callCompleted = true;
-      const reader = _module.readerFromBuf(outPtr);
-      const result = {{ sync_method.decode_expr }};
-      return result;
-    } finally {
-      if (callCompleted) {
-        _module.freeBuf(outPtr);
-      } else {
-        _module.freeBufDescriptor(outPtr);
-      }
-    }
-{%- when TsReturnAbi::WasmStringPacked %}
-    const packedString = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
-    return _module.takePackedUtf8String(packedString);
+{%- when TsReturnAbi::Packed %}
+    const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
+    const reader = _module.takePackedBuffer(packed);
+    return {{ sync_method.decode_expr }};
+{%- when TsReturnAbi::RawPacked with { decode_expr } %}
+    const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
+    return {{ decode_expr }};
 {%- endmatch %}
 {%- when TsClassMethodMode::Async with (async_method) %}
     const handle = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }});
@@ -176,25 +164,13 @@ export class {{ cls.class_name }} {
 {%- else %}
       return (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}){{ ts_cast }};
 {%- endif %}
-{%- when TsReturnAbi::WireEncoded %}
-      const outPtr = _module.allocBufDescriptor();
-      let callCompleted = false;
-      try {
-        (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args_with_out() }});
-        callCompleted = true;
-        const reader = _module.readerFromBuf(outPtr);
-        const result = {{ sync_method.decode_expr }};
-        return result;
-      } finally {
-        if (callCompleted) {
-          _module.freeBuf(outPtr);
-        } else {
-          _module.freeBufDescriptor(outPtr);
-        }
-      }
-{%- when TsReturnAbi::WasmStringPacked %}
-      const packedString = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
-      return _module.takePackedUtf8String(packedString);
+{%- when TsReturnAbi::Packed %}
+      const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
+      const reader = _module.takePackedBuffer(packed);
+      return {{ sync_method.decode_expr }};
+{%- when TsReturnAbi::RawPacked with { decode_expr } %}
+      const packed = (_exports.{{ method.ffi_name }} as Function)({{ method.ffi_call_args() }}) as bigint;
+      return {{ decode_expr }};
 {%- endmatch %}
     } finally {
       {{ method.cleanup_code() }}

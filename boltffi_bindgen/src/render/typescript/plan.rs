@@ -543,8 +543,8 @@ mod tests {
 pub enum TsReturnAbi {
     Void,
     Direct { ts_cast: String },
-    WireEncoded,
-    WasmStringPacked,
+    Packed,
+    RawPacked { decode_expr: String },
 }
 
 impl TsReturnAbi {
@@ -556,8 +556,12 @@ impl TsReturnAbi {
         matches!(self, Self::Direct { .. })
     }
 
-    pub fn is_wire_encoded(&self) -> bool {
-        matches!(self, Self::WireEncoded)
+    pub fn is_packed(&self) -> bool {
+        matches!(self, Self::Packed)
+    }
+
+    pub fn is_raw_packed(&self) -> bool {
+        matches!(self, Self::RawPacked { .. })
     }
 }
 

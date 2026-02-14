@@ -90,6 +90,31 @@ impl FfiBuf<u8> {
     pub fn wire_encode<V: WireEncode>(value: &V) -> Self {
         Self::from_vec(WireBuffer::new(value).into_bytes())
     }
+
+    pub fn from_raw_vec<T>(vec: Vec<T>) -> Self {
+        let mut vec = vec;
+        vec.shrink_to_fit();
+        let ptr = vec.as_mut_ptr() as *mut u8;
+        let byte_len = vec.len() * core::mem::size_of::<T>();
+        let byte_cap = vec.capacity() * core::mem::size_of::<T>();
+        core::mem::forget(vec);
+        Self {
+            ptr,
+            len: byte_len,
+            cap: byte_cap,
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn into_packed(self) -> u64 {
+        let ptr = self.ptr;
+        let len = self.len;
+        core::mem::forget(self);
+        if len == 0 {
+            return 0;
+        }
+        ((len as u64) << 32) | (ptr as u64)
+    }
 }
 
 #[macro_export]

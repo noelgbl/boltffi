@@ -945,12 +945,23 @@ impl<'a> TypeScriptLowerer<'a> {
                 decode_ops,
                 encode_ops: _,
             } => {
-                let decode = emit::emit_reader_read(decode_ops);
+                // Fast paths that bypass WireReader for common return types:
+                // - Vec<primitive>: uses takePackedXxxArray (Rust uses from_raw_vec, no count prefix)
+                // - String: uses takePackedUtf8StringPrefixed (decodes directly from WASM memory)
                 let ts_type_str = infer_ts_type_from_read_ops(decode_ops);
-                if is_plain_string_wire_return(decode_ops) {
-                    (Some(ts_type_str), TsReturnAbi::WasmStringPacked, decode)
-                } else {
-                    (Some(ts_type_str), TsReturnAbi::WireEncoded, decode)
+                match decode_ops.ops.first() {
+                    Some(ReadOp::Vec { element_type: TypeExpr::Primitive(prim), .. }) => {
+                        let decode = emit::emit_raw_primitive_array_read(*prim);
+                        (Some(ts_type_str), TsReturnAbi::RawPacked { decode_expr: decode }, String::new())
+                    }
+                    Some(ReadOp::String { .. }) => {
+                        let decode = "_module.takePackedUtf8String(packed)".to_string();
+                        (Some(ts_type_str), TsReturnAbi::RawPacked { decode_expr: decode }, String::new())
+                    }
+                    _ => {
+                        let decode = emit::emit_reader_read(decode_ops);
+                        (Some(ts_type_str), TsReturnAbi::Packed, decode)
+                    }
                 }
             }
             ReturnTransport::Handle { class_id, nullable } => {
@@ -1036,7 +1047,7 @@ impl<'a> TypeScriptLowerer<'a> {
                 continue;
             }
 
-            let mut wasm_params: Vec<TsWasmParam> = call
+            let wasm_params: Vec<TsWasmParam> = call
                 .params
                 .iter()
                 .map(|p| TsWasmParam {
@@ -1048,20 +1059,7 @@ impl<'a> TypeScriptLowerer<'a> {
             let return_wasm_type = match &call.return_ {
                 ReturnTransport::Void => None,
                 ReturnTransport::Direct(abi_type) => Some(abi_type_to_wasm(abi_type)),
-                ReturnTransport::Encoded { decode_ops, .. } => {
-                    if is_plain_string_wire_return(decode_ops) {
-                        Some("bigint".to_string())
-                    } else {
-                        wasm_params.insert(
-                            0,
-                            TsWasmParam {
-                                name: "out".to_string(),
-                                wasm_type: "number".to_string(),
-                            },
-                        );
-                        None
-                    }
-                }
+                ReturnTransport::Encoded { .. } => Some("bigint".to_string()),
                 ReturnTransport::Handle { .. } => Some("number".to_string()),
                 ReturnTransport::Callback { .. } => None,
             };
@@ -1229,10 +1227,6 @@ fn primitive_buffer_ts_type(abi_type: AbiType) -> String {
         | AbiType::F64 => "number[]".to_string(),
         AbiType::Void | AbiType::Pointer => "unknown[]".to_string(),
     }
-}
-
-fn is_plain_string_wire_return(seq: &ReadSeq) -> bool {
-    matches!(seq.ops.as_slice(), [ReadOp::String { .. }])
 }
 
 fn infer_ts_type_from_read_ops(seq: &ReadSeq) -> String {
@@ -1419,13 +1413,13 @@ fn remap_named_in_write_op(op: &WriteOp) -> WriteOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::Lowerer as IrLowerer;
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
         ClassDef, ConstructorDef, FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver,
         ReturnDef,
     };
     use crate::ir::ids::{ClassId, FunctionId, MethodId, ParamName};
-    use crate::ir::Lowerer as IrLowerer;
 
     fn empty_contract() -> FfiContract {
         FfiContract {

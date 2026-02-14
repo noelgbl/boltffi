@@ -227,8 +227,14 @@ console.log('=====================================\n');
 console.log('| Benchmark | BoltFFI (ns) | wasm-bindgen (ns) | Speedup |');
 console.log('|-----------|--------------|-------------------|---------|');
 for (const r of results) {
-  const speedupStr = parseFloat(r.speedup) < 1 
-    ? `${(1/parseFloat(r.speedup)).toFixed(2)}x faster` 
-    : `${r.speedup} slower`;
+  const ratio = parseFloat(r.speedup);
+  let speedupStr;
+  if (ratio >= 0.95 && ratio <= 1.05) {
+    speedupStr = 'TIE';
+  } else if (ratio < 1) {
+    speedupStr = `${(1/ratio).toFixed(2)}x faster`;
+  } else {
+    speedupStr = `${r.speedup} slower`;
+  }
   console.log(`| ${r.name} | ${r.boltffi_ns} | ${r.wasmbindgen_ns} | ${speedupStr} |`);
 }

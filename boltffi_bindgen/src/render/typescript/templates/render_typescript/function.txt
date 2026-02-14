@@ -8,25 +8,13 @@
   (_exports.{{ ffi_name }} as Function)({{ call_args }});
 {%- when TsReturnAbi::Direct with { ts_cast } %}
   return (_exports.{{ ffi_name }} as Function)({{ call_args }}){{ ts_cast }};
-{%- when TsReturnAbi::WireEncoded %}
-  const outPtr = _module.allocBufDescriptor();
-  let callCompleted = false;
-  try {
-    (_exports.{{ ffi_name }} as Function)({{ call_args_with_out }});
-    callCompleted = true;
-    const reader = _module.readerFromBuf(outPtr);
-    const result = {{ decode_expr }};
-    return result;
-  } finally {
-    if (callCompleted) {
-      _module.freeBuf(outPtr);
-    } else {
-      _module.freeBufDescriptor(outPtr);
-    }
-  }
-{%- when TsReturnAbi::WasmStringPacked %}
-  const packedString = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
-  return _module.takePackedUtf8String(packedString);
+{%- when TsReturnAbi::Packed %}
+  const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+  const reader = _module.takePackedBuffer(packed);
+  return {{ decode_expr }};
+{%- when TsReturnAbi::RawPacked with { decode_expr } %}
+  const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+  return {{ decode_expr }};
 {%- endmatch %}
 {%- else %}
   try {
@@ -35,25 +23,13 @@
     (_exports.{{ ffi_name }} as Function)({{ call_args }});
 {%- when TsReturnAbi::Direct with { ts_cast } %}
     return (_exports.{{ ffi_name }} as Function)({{ call_args }}){{ ts_cast }};
-{%- when TsReturnAbi::WireEncoded %}
-    const outPtr = _module.allocBufDescriptor();
-    let callCompleted = false;
-    try {
-      (_exports.{{ ffi_name }} as Function)({{ call_args_with_out }});
-      callCompleted = true;
-      const reader = _module.readerFromBuf(outPtr);
-      const result = {{ decode_expr }};
-      return result;
-    } finally {
-      if (callCompleted) {
-        _module.freeBuf(outPtr);
-      } else {
-        _module.freeBufDescriptor(outPtr);
-      }
-    }
-{%- when TsReturnAbi::WasmStringPacked %}
-    const packedString = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
-    return _module.takePackedUtf8String(packedString);
+{%- when TsReturnAbi::Packed %}
+    const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+    const reader = _module.takePackedBuffer(packed);
+    return {{ decode_expr }};
+{%- when TsReturnAbi::RawPacked with { decode_expr } %}
+    const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+    return {{ decode_expr }};
 {%- endmatch %}
   } finally {
     {{ cleanup_code }}

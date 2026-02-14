@@ -130,6 +130,25 @@ pub fn emit_reader_read(seq: &ReadSeq) -> String {
     seq.ops.first().map(emit_reader_read_op).unwrap_or_default()
 }
 
+pub fn emit_raw_primitive_array_read(prim: PrimitiveType) -> String {
+    let method = match prim {
+        PrimitiveType::I8 => "takePackedI8Array",
+        PrimitiveType::U8 => "takePackedU8Array",
+        PrimitiveType::I16 => "takePackedI16Array",
+        PrimitiveType::U16 => "takePackedU16Array",
+        PrimitiveType::I32 => "takePackedI32Array",
+        PrimitiveType::U32 => "takePackedU32Array",
+        PrimitiveType::I64 => "takePackedI64Array",
+        PrimitiveType::U64 => "takePackedU64Array",
+        PrimitiveType::ISize => "takePackedI64Array",
+        PrimitiveType::USize => "takePackedU64Array",
+        PrimitiveType::F32 => "takePackedF32Array",
+        PrimitiveType::F64 => "takePackedF64Array",
+        PrimitiveType::Bool => return "reader.readArray(() => reader.readBool())".into(),
+    };
+    format!("_module.{method}(packed)")
+}
+
 fn emit_reader_read_op(op: &ReadOp) -> String {
     match op {
         ReadOp::Primitive { primitive, .. } => match primitive {
@@ -164,12 +183,29 @@ fn emit_reader_read_op(op: &ReadOp) -> String {
             element_type,
             element,
             ..
-        } => {
-            if matches!(element_type, TypeExpr::Primitive(PrimitiveType::U8)) {
-                return "reader.readBytes()".into();
+        } => match element_type {
+            TypeExpr::Primitive(prim) => match prim {
+                PrimitiveType::Bool => {
+                    let inner = emit_reader_read(element);
+                    format!("reader.readArray(() => {inner})")
+                }
+                PrimitiveType::I8 => "reader.readI8Array()".into(),
+                PrimitiveType::U8 => "reader.readBytes()".into(),
+                PrimitiveType::I16 => "reader.readI16Array()".into(),
+                PrimitiveType::U16 => "reader.readU16Array()".into(),
+                PrimitiveType::I32 => "reader.readI32Array()".into(),
+                PrimitiveType::U32 => "reader.readU32Array()".into(),
+                PrimitiveType::I64 => "reader.readI64Array()".into(),
+                PrimitiveType::U64 => "reader.readU64Array()".into(),
+                PrimitiveType::ISize => "reader.readI64Array()".into(),
+                PrimitiveType::USize => "reader.readU64Array()".into(),
+                PrimitiveType::F32 => "reader.readF32Array()".into(),
+                PrimitiveType::F64 => "reader.readF64Array()".into(),
+            },
+            _ => {
+                let inner = emit_reader_read(element);
+                format!("reader.readArray(() => {inner})")
             }
-            let inner = emit_reader_read(element);
-            format!("reader.readArray(() => {inner})")
         }
         ReadOp::Record { id, .. } => {
             format!("{}Codec.decode(reader)", to_pascal_case(id.as_str()))
@@ -203,7 +239,7 @@ fn wrap_error_in_exception(err_seq: &ReadSeq, err_read: &str) -> String {
             ReadOp::String { .. } => {
                 format!("new Error({err_read})")
             }
-            _ => format!("new Error(String({err_read}))")
+            _ => format!("new Error(String({err_read}))"),
         })
         .unwrap_or_else(|| format!("new Error(String({err_read}))"))
 }
