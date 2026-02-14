@@ -271,10 +271,10 @@ impl JniParam {
 pub struct JniClosureTrampoline {
     pub trampoline_name: String,
     pub signature_id: String,
+    pub callbacks_class_jni_path: String,
     pub c_params: String,
-    pub jni_signature: String,
+    pub jni_params_signature: String,
     pub jni_call_args: String,
-    pub invoke_method_name: String,
     pub record_params: Vec<JniClosureRecordParam>,
 }
 

@@ -21,9 +21,7 @@ JNIEXPORT {{ return_abi.jni_return_type() }} JNICALL {{ jni_name }}(JNIEnv *env,
     uint8_t* _{{ param.name }}_ptr = (uint8_t*)(*env)->GetDirectBufferAddress(env, {{ param.name }});
     uintptr_t _{{ param.name }}_len = (_{{ param.name }}_ptr && _{{ param.name }}_size > 0) ? (uintptr_t)_{{ param.name }}_size : 0;
 {%- endif %}
-{%- if param.is_closure() %}
-    jobject _{{ param.name }}_ref = (*env)->NewGlobalRef(env, (jobject){{ param.name }});
-{%- endif %}
+
 {%- endfor %}
 {%- if return_abi.is_unit() %}
     {{ ffi_name }}({% if include_handle %}(void*)handle{% if params.len() > 0 %}, {% endif %}{% endif %}{% for param in params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
@@ -39,9 +37,7 @@ JNIEXPORT {{ return_abi.jni_return_type() }} JNICALL {{ jni_name }}(JNIEnv *env,
 {%- if param.is_string() %}
     if ({{ param.name }}) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
 {%- endif %}
-{%- if param.is_closure() %}
-    (*env)->DeleteGlobalRef(env, _{{ param.name }}_ref);
-{%- endif %}
+
 {%- endfor %}
 {%- if return_abi.is_direct() %}
     return {{ return_abi.jni_result_cast() }}_result;
