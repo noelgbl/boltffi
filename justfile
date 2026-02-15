@@ -99,7 +99,15 @@ check: fmt-check lint test
 
 # Swift benchmark (macOS CLI) - builds xcframework and runs benchmark
 bench-swift:
-    cd benchmarks/rust-boltffi && ./build.sh --platform apple --release
+    #!/usr/bin/env bash
+    set -e
+    tmpfile=$(mktemp /tmp/boltffi_bench_swift_XXXXXX.txt)
+    trap "rm -f $tmpfile" EXIT
+    cd benchmarks/rust-boltffi
+    ./build.sh --platform apple --release 2>&1 | tee "$tmpfile"
+    echo ""
+    echo "=== Summary ==="
+    python3 ../swift-macos-bench/format_bench.py < "$tmpfile"
 
 # Kotlin benchmark (JVM via JMH) - builds JNI libs, runs JMH, generates report
 bench-kotlin:
@@ -120,7 +128,7 @@ bench-kotlin:
     echo "=== Generating report ==="
     python3 jmh_report.py --format both
     echo ""
-    echo "Report: benchmarks/kotlin-jvm-bench/build/results/jmh/report.txt"
+    echo "Report: $(pwd)/build/results/jmh/report.txt"
 
 # Build xcframework only (for iOS development in Xcode)
 bench-build-ios:

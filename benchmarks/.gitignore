@@ -17,3 +17,5 @@ kotlin-jvm-bench/src/main/kotlin/jni/
 *.so
 *.xcuserstate
 Package.resolved
+/rust-uniffi/dist
+/kotlin-jvm-bench/build
