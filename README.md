@@ -1,6 +1,6 @@
 # BoltFFI
 
-A high-performance multi-language bindings generator for Rust, up to 1,000x faster than UniFFI
+A high-performance multi-language bindings generator for Rust. Up to 1,000x faster than UniFFI. Up to 450x faster than wasm-bindgen.
 
 <p align="center">
   <img src="docs/assets/demo.gif" width="700" />
@@ -10,6 +10,8 @@ Quick links: [User Guide](https://boltffi.dev/docs/overview) | [Tutorial](https:
 
 ## Performance
 
+### vs UniFFI (Swift/Kotlin)
+
 | Benchmark | BoltFFI | UniFFI | Speedup |
 |-----------|--------:|-------:|--------:|
 | noop | <1 ns | 1,416 ns | >1000x |
@@ -18,14 +20,24 @@ Quick links: [User Guide](https://boltffi.dev/docs/overview) | [Tutorial](https:
 | generate_locations (1k structs) | 4,167 ns | 1,276,333 ns | 306x |
 | generate_locations (10k structs) | 62,542 ns | 12,817,000 ns | 205x |
 
+### vs wasm-bindgen (WASM)
+
+| Benchmark | BoltFFI | wasm-bindgen | Speedup |
+|-----------|--------:|-------------:|--------:|
+| 1k particles | 29,886 ns | 13,532,530 ns | 453x |
+| 100 particles | 3,117 ns | 748,287 ns | 240x |
+| 1k locations | 21,931 ns | 4,037,879 ns | 184x |
+| 1k trades | 42,015 ns | 5,781,767 ns | 138x |
+| 100 locations | 2,199 ns | 283,753 ns | 129x |
+
 Full benchmark code: [benchmarks](./benchmarks)
 
 
 ## Why BoltFFI?
 
-Serialization-based FFI is slow. Tools like UniFFI serialize every value to a byte buffer on each call. That overhead shows up when you're making thousands of FFI calls per second.
+Serialization-based FFI is slow. UniFFI serializes every value to a byte buffer. wasm-bindgen materializes every struct as a JavaScript object. That overhead shows up even when you're making tens or hundreds of FFI calls per second.
 
-BoltFFI uses zero-copy where possible. Primitives pass as raw values. Structs with primitive fields pass as pointers to memory both sides can read directly. Only strings and collections go through encoding.
+BoltFFI uses zero-copy where possible. Primitives pass as raw values. Structs with primitive fields pass as pointers to memory both sides can read directly. WASM uses a wire buffer format that avoids per-field allocation. Only strings and collections go through encoding.
 
 ## What it does
 
@@ -52,13 +64,16 @@ Run `boltffi pack`:
 
 ```bash
 boltffi pack apple
-# Produces: ./dist/YourCrate.xcframework + Package.swift
+# Produces: ./dist/apple/YourCrate.xcframework + Package.swift
 
 boltffi pack android
-# Produces: ./dist/android/libs/*.so + Kotlin bindings
+# Produces: ./dist/android/jniLibs/*.so + Kotlin bindings
+
+boltffi pack wasm
+# Produces: ./dist/wasm/pkg/*.wasm + TypeScript bindings + npm package
 ```
 
-Use it from Swift or Kotlin:
+Use it from Swift, Kotlin, or TypeScript:
 
 ```swift
 let d = distance(a: Point(x: 0, y: 0), b: Point(x: 3, y: 4)) // 5.0
@@ -68,7 +83,12 @@ let d = distance(a: Point(x: 0, y: 0), b: Point(x: 3, y: 4)) // 5.0
 val d = distance(a = Point(x = 0.0, y = 0.0), b = Point(x = 3.0, y = 4.0)) // 5.0
 ```
 
-The generated bindings use each language's idioms. Swift gets async/await. Kotlin gets coroutines. Errors become native exceptions.
+```typescript
+import { distance } from 'your-crate';
+const d = distance({ x: 0, y: 0 }, { x: 3, y: 4 }); // 5.0
+```
+
+The generated bindings use each language's idioms. Swift gets async/await. Kotlin gets coroutines. TypeScript gets Promises. Errors become native exceptions.
 
 ## Supported languages
 
@@ -76,9 +96,10 @@ The generated bindings use each language's idioms. Swift gets async/await. Kotli
 |----------|--------------|
 | Swift    | Full support |
 | Kotlin   | Full support |
-| WASM     | In progress  |
-| Python   | Soon         |
-| C#       | Soon         |
+| WASM/TypeScript | Full support |
+| Python   | Planned      |
+| C#       | Planned      |
+| Ruby     | Planned      |
 
 Want another language? [Open an issue](https://github.com/boltffi/boltffi/issues).
 
