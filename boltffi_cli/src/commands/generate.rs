@@ -124,7 +124,6 @@ fn generate_swift(config: &Config, output: Option<PathBuf>) -> Result<()> {
         source,
     })?;
 
-    println!("Generated: {}", output_path.display());
     Ok(())
 }
 
@@ -199,7 +198,6 @@ fn generate_kotlin(config: &Config, output: Option<PathBuf>) -> Result<()> {
         path: kotlin_path.clone(),
         source,
     })?;
-    println!("Generated: {}", kotlin_path.display());
 
     let jni_module =
         render::jni::JniLowerer::new(&contract, &abi_contract, package_name, module_name).lower();
@@ -209,7 +207,6 @@ fn generate_kotlin(config: &Config, output: Option<PathBuf>) -> Result<()> {
         path: jni_path.clone(),
         source,
     })?;
-    println!("Generated: {}", jni_path.display());
 
     Ok(())
 }
@@ -253,7 +250,6 @@ fn generate_header(config: &Config, output: Option<PathBuf>) -> Result<()> {
         source,
     })?;
 
-    println!("Generated: {}", output_path.display());
     Ok(())
 }
 
@@ -314,7 +310,5 @@ fn generate_typescript(config: &Config, output: Option<PathBuf>) -> Result<()> {
         source,
     })?;
 
-    println!("Generated: {}", output_path.display());
-    println!("Generated: {}", node_output_path.display());
     Ok(())
 }

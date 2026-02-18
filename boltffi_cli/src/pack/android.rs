@@ -12,10 +12,7 @@ pub struct AndroidPackager<'a> {
     release: bool,
 }
 
-pub struct AndroidOutput {
-    pub jnilibs_path: PathBuf,
-    pub copied_libraries: Vec<PathBuf>,
-}
+pub struct AndroidOutput;
 
 impl<'a> AndroidPackager<'a> {
     pub fn new(config: &'a Config, libraries: Vec<BuiltLibrary>, release: bool) -> Self {
@@ -55,23 +52,17 @@ impl<'a> AndroidPackager<'a> {
             return Err(CliError::FileNotFound(header_path));
         }
 
-        let copied_libraries = android_libs
-            .iter()
-            .map(|lib| {
-                self.link_shared_library(
-                    lib,
-                    &jnilibs_path,
-                    &android_toolchain,
-                    &jni_glue_path,
-                    &header_include_dir,
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
+        for lib in &android_libs {
+            self.link_shared_library(
+                lib,
+                &jnilibs_path,
+                &android_toolchain,
+                &jni_glue_path,
+                &header_include_dir,
+            )?;
+        }
 
-        Ok(AndroidOutput {
-            jnilibs_path: jnilibs_path.clone(),
-            copied_libraries,
-        })
+        Ok(AndroidOutput)
     }
 
     fn filter_android_libraries(&self) -> Vec<&BuiltLibrary> {

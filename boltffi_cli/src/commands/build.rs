@@ -20,6 +20,7 @@ pub fn run_build(config: &Config, options: BuildCommandOptions) -> Result<Vec<Bu
     let build_options = BuildOptions {
         release: options.release,
         package: Some(config.library_name().to_string()),
+        on_output: None,
     };
 
     let builder = Builder::new(config, build_options);

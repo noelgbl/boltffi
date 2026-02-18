@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod error;
 mod pack;
+mod reporter;
 mod target;
 
 use clap::{Parser, Subcommand};
@@ -31,6 +32,12 @@ use error::{CliError, Result};
 )]
 #[command(version)]
 struct Cli {
+    #[arg(short, long, action = clap::ArgAction::Count, global = true, help = "Increase verbosity (-v, -vv)")]
+    verbose: u8,
+
+    #[arg(short, long, global = true, help = "Suppress all output")]
+    quiet: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -239,15 +246,24 @@ enum PackLayoutArg {
 fn main() {
     let cli = Cli::parse();
 
-    let result = execute_command(cli.command);
+    let verbosity = if cli.quiet {
+        reporter::Verbosity::Quiet
+    } else if cli.verbose > 0 {
+        reporter::Verbosity::Verbose
+    } else {
+        reporter::Verbosity::Normal
+    };
+
+    let reporter = reporter::Reporter::new(verbosity);
+    let result = execute_command(cli.command, &reporter);
 
     if let Err(err) = result {
-        eprintln!("Error: {}", err);
+        eprintln!("\n{} {}", console::style("error:").red().bold(), err);
         std::process::exit(1);
     }
 }
 
-fn execute_command(command: Commands) -> Result<()> {
+fn execute_command(command: Commands, reporter: &reporter::Reporter) -> Result<()> {
     match command {
         Commands::Init { name } => {
             let options = InitOptions {
@@ -395,12 +411,12 @@ fn execute_command(command: Commands) -> Result<()> {
                     no_build,
                 }),
             };
-            run_pack(&config, command)
+            run_pack(&config, command, reporter)
         }
 
         Commands::Release { platform } => {
             let config = load_config()?;
-            run_release(&config, platform)
+            run_release(&config, platform, reporter)
         }
 
         Commands::Verify { path, json } => {
@@ -434,9 +450,12 @@ fn load_config_if_present() -> Result<Option<Config>> {
     Config::load(&config_path).map(Some).map_err(Into::into)
 }
 
-fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()> {
-    println!("Running full release pipeline...");
-    println!();
+fn run_release(
+    config: &Config,
+    platform: Option<BuildPlatformArg>,
+    reporter: &reporter::Reporter,
+) -> Result<()> {
+    reporter.section("🚀", "Running full release pipeline");
 
     let check_options = CheckOptions {
         fix: false,
@@ -496,6 +515,7 @@ fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()
                         xcframework_only: false,
                         layout: None,
                     }),
+                    reporter,
                 )?;
             }
         }
@@ -508,6 +528,7 @@ fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()
                         regenerate: false,
                         no_build: true,
                     }),
+                    reporter,
                 )?;
             }
         }
@@ -520,6 +541,7 @@ fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()
                         regenerate: false,
                         no_build: true,
                     }),
+                    reporter,
                 )?;
             }
         }
@@ -536,6 +558,7 @@ fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()
                         xcframework_only: false,
                         layout: None,
                     }),
+                    reporter,
                 )?;
             }
             if config.is_android_enabled() {
@@ -546,6 +569,7 @@ fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()
                         regenerate: false,
                         no_build: true,
                     }),
+                    reporter,
                 )?;
             }
             if config.is_wasm_enabled() {
@@ -556,6 +580,7 @@ fn run_release(config: &Config, platform: Option<BuildPlatformArg>) -> Result<()
                         regenerate: false,
                         no_build: true,
                     }),
+                    reporter,
                 )?;
             }
         }

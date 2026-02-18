@@ -26,6 +26,10 @@ setup: setup-targets setup-tools
 install:
     cargo install --path boltffi_cli --force
 
+# Run boltffi pack in benchmarks/rust-boltffi
+pack *args:
+    cd benchmarks/rust-boltffi && cargo run -p boltffi_cli --manifest-path ../../Cargo.toml -- pack {{args}}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Build
 # ─────────────────────────────────────────────────────────────────────────────

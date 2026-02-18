@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::config::Config;
 use crate::error::{CliError, Result};
@@ -187,6 +187,7 @@ impl<'a> XcframeworkBuilder<'a> {
         }
 
         xcodebuild_cmd.arg("-output").arg(&xcframework_path);
+        xcodebuild_cmd.stdout(Stdio::null());
 
         let status = xcodebuild_cmd
             .status()

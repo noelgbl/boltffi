@@ -1,8 +1,7 @@
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::build::{BuildOptions, Builder, all_successful, failed_targets};
+use crate::build::{BuildOptions, Builder, OutputCallback, all_successful, failed_targets};
 use crate::commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
 use crate::config::{
     Config, SpmDistribution, SpmLayout, WasmNpmTarget, WasmOptimizeLevel, WasmOptimizeOnMissing,
@@ -10,6 +9,7 @@ use crate::config::{
 };
 use crate::error::{CliError, Result};
 use crate::pack::{AndroidPackager, SpmPackageGenerator, XcframeworkBuilder, compute_checksum};
+use crate::reporter::{Reporter, Step};
 use crate::target::{BuiltLibrary, Platform};
 
 pub enum PackCommand {
@@ -47,16 +47,16 @@ pub struct PackWasmOptions {
     pub no_build: bool,
 }
 
-pub fn run_pack(config: &Config, command: PackCommand) -> Result<()> {
+pub fn run_pack(config: &Config, command: PackCommand, reporter: &Reporter) -> Result<()> {
     match command {
-        PackCommand::All(options) => pack_all(config, options),
-        PackCommand::Apple(options) => pack_apple(config, options),
-        PackCommand::Android(options) => pack_android(config, options),
-        PackCommand::Wasm(options) => pack_wasm(config, options),
+        PackCommand::All(options) => pack_all(config, options, reporter),
+        PackCommand::Apple(options) => pack_apple(config, options, reporter),
+        PackCommand::Android(options) => pack_android(config, options, reporter),
+        PackCommand::Wasm(options) => pack_wasm(config, options, reporter),
     }
 }
 
-fn pack_all(config: &Config, options: PackAllOptions) -> Result<()> {
+fn pack_all(config: &Config, options: PackAllOptions, reporter: &Reporter) -> Result<()> {
     let mut packed_any = false;
 
     if config.is_apple_enabled() {
@@ -71,6 +71,7 @@ fn pack_all(config: &Config, options: PackAllOptions) -> Result<()> {
                 xcframework_only: false,
                 layout: None,
             },
+            reporter,
         )?;
         packed_any = true;
     }
@@ -83,6 +84,7 @@ fn pack_all(config: &Config, options: PackAllOptions) -> Result<()> {
                 regenerate: options.regenerate,
                 no_build: options.no_build,
             },
+            reporter,
         )?;
         packed_any = true;
     }
@@ -95,18 +97,20 @@ fn pack_all(config: &Config, options: PackAllOptions) -> Result<()> {
                 regenerate: options.regenerate,
                 no_build: options.no_build,
             },
+            reporter,
         )?;
         packed_any = true;
     }
 
     if !packed_any {
-        println!("warning: no targets enabled in boltffi.toml");
+        reporter.warning("no targets enabled in boltffi.toml");
     }
 
+    reporter.finish();
     Ok(())
 }
 
-fn pack_apple(config: &Config, options: PackAppleOptions) -> Result<()> {
+fn pack_apple(config: &Config, options: PackAppleOptions, reporter: &Reporter) -> Result<()> {
     if !config.is_apple_enabled() {
         return Err(CliError::CommandFailed {
             command: "targets.apple.enabled = false".to_string(),
@@ -114,8 +118,10 @@ fn pack_apple(config: &Config, options: PackAppleOptions) -> Result<()> {
         });
     }
 
+    reporter.section("🍎", "Packing Apple");
+
     if !config.apple_include_macos() {
-        println!("macOS excluded because targets.apple.include_macos = false");
+        reporter.warning("macOS excluded (targets.apple.include_macos = false)");
     }
 
     if options.spm_only && options.xcframework_only {
@@ -126,18 +132,18 @@ fn pack_apple(config: &Config, options: PackAppleOptions) -> Result<()> {
     }
 
     if !options.no_build {
-        run_step("Building Apple targets", || {
-            build_apple_targets(config, options.release)
-        })?;
+        let step = reporter.step("Building Apple targets");
+        build_apple_targets(config, options.release, &step)?;
+        step.finish_success();
     }
 
     let layout = options.layout.unwrap_or_else(|| config.apple_spm_layout());
     let package_root = config.apple_spm_output();
 
     if options.regenerate {
-        run_step("Generating Apple bindings", || {
-            generate_apple_bindings(config, layout, &package_root)
-        })?;
+        let step = reporter.step("Generating Apple bindings");
+        generate_apple_bindings(config, layout, &package_root)?;
+        step.finish_success();
     }
 
     let libraries = discover_built_libraries(&config.crate_artifact_name(), options.release);
@@ -160,14 +166,15 @@ fn pack_apple(config: &Config, options: PackAppleOptions) -> Result<()> {
     let should_build_xcframework = !options.spm_only;
     let should_generate_spm = !options.xcframework_only;
 
-    let xcframework_output = should_build_xcframework
-        .then(|| {
-            run_step("Creating xcframework", || {
-                XcframeworkBuilder::new(config, apple_libraries.clone(), headers_dir.clone())
-                    .build_with_zip()
-            })
-        })
-        .transpose()?;
+    let xcframework_output = if should_build_xcframework {
+        let step = reporter.step("Creating xcframework");
+        let output = XcframeworkBuilder::new(config, apple_libraries.clone(), headers_dir.clone())
+            .build_with_zip()?;
+        step.finish_success();
+        Some(output)
+    } else {
+        None
+    };
 
     if should_generate_spm {
         let (checksum, version) = match config.apple_spm_distribution() {
@@ -178,9 +185,10 @@ fn pack_apple(config: &Config, options: PackAppleOptions) -> Result<()> {
                     .and_then(|o| o.checksum.clone())
                     .map(Ok)
                     .unwrap_or_else(|| {
-                        run_step("Computing checksum from existing xcframework.zip", || {
-                            existing_xcframework_checksum(config)
-                        })
+                        let step = reporter.step("Computing checksum");
+                        let result = existing_xcframework_checksum(config);
+                        step.finish_success();
+                        result
                     })?;
                 let version = options
                     .version
@@ -191,7 +199,7 @@ fn pack_apple(config: &Config, options: PackAppleOptions) -> Result<()> {
         };
 
         if config.apple_spm_skip_package_swift() {
-            println!("Skipping Package.swift generation (skip_package_swift = true)");
+            reporter.warning("Skipping Package.swift (skip_package_swift = true)");
         } else {
             let generator = match config.apple_spm_distribution() {
                 SpmDistribution::Local => SpmPackageGenerator::new_local(config, layout),
@@ -208,29 +216,16 @@ fn pack_apple(config: &Config, options: PackAppleOptions) -> Result<()> {
                 }
             };
 
-            let package_path = run_step("Generating Package.swift", || generator.generate())?;
-            println!("Created: {}", package_path.display());
+            let step = reporter.step("Generating Package.swift");
+            let package_path = generator.generate()?;
+            step.finish_success_with(&format!("{}", package_path.display()));
         }
-    }
-
-    if let Some(output) = xcframework_output {
-        println!("Created: {}", output.xcframework_path.display());
-        output
-            .zip_path
-            .as_ref()
-            .iter()
-            .for_each(|path| println!("Created: {}", path.display()));
-        output
-            .checksum
-            .as_ref()
-            .iter()
-            .for_each(|checksum| println!("Checksum: {}", checksum));
     }
 
     Ok(())
 }
 
-fn pack_wasm(config: &Config, options: PackWasmOptions) -> Result<()> {
+fn pack_wasm(config: &Config, options: PackWasmOptions, reporter: &Reporter) -> Result<()> {
     if !config.is_wasm_enabled() {
         return Err(CliError::CommandFailed {
             command: "targets.wasm.enabled = false".to_string(),
@@ -244,6 +239,8 @@ fn pack_wasm(config: &Config, options: PackWasmOptions) -> Result<()> {
         });
     }
 
+    reporter.section("🌐", "Packing WASM");
+
     let profile = if options.release {
         WasmProfile::Release
     } else {
@@ -251,9 +248,9 @@ fn pack_wasm(config: &Config, options: PackWasmOptions) -> Result<()> {
     };
 
     if !options.no_build {
-        run_step("Building WASM target", || {
-            build_wasm_target(config, profile)
-        })?;
+        let step = reporter.step("Building WASM target");
+        build_wasm_target(config, profile, &step)?;
+        step.finish_success();
     }
 
     let wasm_artifact_path = config.wasm_artifact_path(profile);
@@ -262,21 +259,21 @@ fn pack_wasm(config: &Config, options: PackWasmOptions) -> Result<()> {
     }
 
     if config.wasm_optimize_enabled(profile) {
-        run_step("Optimizing WASM binary", || {
-            optimize_wasm_binary(config, &wasm_artifact_path)
-        })?;
+        let step = reporter.step("Optimizing WASM binary");
+        optimize_wasm_binary(config, &wasm_artifact_path)?;
+        step.finish_success();
     }
 
     if options.regenerate {
-        run_step("Generating TypeScript bindings", || {
-            run_generate_with_output(
-                config,
-                GenerateOptions {
-                    target: GenerateTarget::Typescript,
-                    output: Some(config.wasm_typescript_output()),
-                },
-            )
-        })?;
+        let step = reporter.step("Generating TypeScript bindings");
+        run_generate_with_output(
+            config,
+            GenerateOptions {
+                target: GenerateTarget::Typescript,
+                output: Some(config.wasm_typescript_output()),
+            },
+        )?;
+        step.finish_success();
     }
 
     let npm_output = config.wasm_npm_output();
@@ -302,52 +299,42 @@ fn pack_wasm(config: &Config, options: PackWasmOptions) -> Result<()> {
         return Err(CliError::FileNotFound(generated_typescript_source));
     }
 
-    run_step("Transpiling TypeScript bindings", || {
-        transpile_typescript_bundle(config, &generated_typescript_source, &npm_output)
-    })?;
+    let step = reporter.step("Transpiling TypeScript bindings");
+    transpile_typescript_bundle(config, &generated_typescript_source, &npm_output)?;
+    step.finish_success();
 
     let generated_node_typescript_source = config
         .wasm_typescript_output()
         .join(format!("{}_node.ts", module_name));
     if generated_node_typescript_source.exists() {
-        run_step("Transpiling Node.js bindings", || {
-            transpile_typescript_bundle(config, &generated_node_typescript_source, &npm_output)
-        })?;
+        let step = reporter.step("Transpiling Node.js bindings");
+        transpile_typescript_bundle(config, &generated_node_typescript_source, &npm_output)?;
+        step.finish_success();
     }
 
     let enabled_targets = config.wasm_npm_targets();
-    run_step("Generating WASM loader entrypoints", || {
-        generate_wasm_loader_entrypoints(&module_name, &enabled_targets, &npm_output)
-    })?;
+    let step = reporter.step("Generating WASM loader entrypoints");
+    generate_wasm_loader_entrypoints(&module_name, &enabled_targets, &npm_output)?;
+    step.finish_success();
 
     if config.wasm_npm_generate_package_json() {
-        let package_json_path = run_step("Generating package.json", || {
-            generate_wasm_package_json(config, &module_name, &enabled_targets, &npm_output)
-        })?;
-        println!("Created: {}", package_json_path.display());
+        let step = reporter.step("Generating package.json");
+        let package_json_path =
+            generate_wasm_package_json(config, &module_name, &enabled_targets, &npm_output)?;
+        step.finish_success_with(&format!("{}", package_json_path.display()));
     }
 
     if config.wasm_npm_generate_readme() {
-        let readme_path = run_step("Generating README.md", || {
-            generate_wasm_readme(config, &module_name, &enabled_targets, &npm_output)
-        })?;
-        println!("Created: {}", readme_path.display());
+        let step = reporter.step("Generating README.md");
+        let readme_path =
+            generate_wasm_readme(config, &module_name, &enabled_targets, &npm_output)?;
+        step.finish_success_with(&format!("{}", readme_path.display()));
     }
-
-    println!("Created: {}", packaged_wasm_path.display());
-    println!(
-        "Created: {}",
-        npm_output.join(format!("{}.js", module_name)).display()
-    );
-    println!(
-        "Created: {}",
-        npm_output.join(format!("{}.d.ts", module_name)).display()
-    );
 
     Ok(())
 }
 
-fn pack_android(config: &Config, options: PackAndroidOptions) -> Result<()> {
+fn pack_android(config: &Config, options: PackAndroidOptions, reporter: &Reporter) -> Result<()> {
     if !config.is_android_enabled() {
         return Err(CliError::CommandFailed {
             command: "targets.android.enabled = false".to_string(),
@@ -355,31 +342,34 @@ fn pack_android(config: &Config, options: PackAndroidOptions) -> Result<()> {
         });
     }
 
+    reporter.section("🤖", "Packing Android");
+
     if !options.no_build {
-        run_step("Building Android targets", || {
-            build_android_targets(config, options.release)
-        })?;
+        let step = reporter.step("Building Android targets");
+        build_android_targets(config, options.release, &step)?;
+        step.finish_success();
     }
 
     if options.regenerate {
-        run_step("Generating Kotlin bindings", || {
-            run_generate_with_output(
-                config,
-                GenerateOptions {
-                    target: GenerateTarget::Kotlin,
-                    output: Some(config.android_kotlin_output()),
-                },
-            )
-        })?;
-        run_step("Generating C header", || {
-            run_generate_with_output(
-                config,
-                GenerateOptions {
-                    target: GenerateTarget::Header,
-                    output: Some(config.android_header_output()),
-                },
-            )
-        })?;
+        let step = reporter.step("Generating Kotlin bindings");
+        run_generate_with_output(
+            config,
+            GenerateOptions {
+                target: GenerateTarget::Kotlin,
+                output: Some(config.android_kotlin_output()),
+            },
+        )?;
+        step.finish_success();
+
+        let step = reporter.step("Generating C header");
+        run_generate_with_output(
+            config,
+            GenerateOptions {
+                target: GenerateTarget::Header,
+                output: Some(config.android_header_output()),
+            },
+        )?;
+        step.finish_success();
     }
 
     let libraries = discover_built_libraries(&config.crate_artifact_name(), options.release);
@@ -395,21 +385,26 @@ fn pack_android(config: &Config, options: PackAndroidOptions) -> Result<()> {
     }
 
     let packager = AndroidPackager::new(config, android_libraries, options.release);
-    let output = run_step("Packaging jniLibs", || packager.package())?;
-
-    println!("Created: {}", output.jnilibs_path.display());
-    output
-        .copied_libraries
-        .iter()
-        .for_each(|path| println!("  {}", path.display()));
+    let step = reporter.step("Packaging jniLibs");
+    packager.package()?;
+    step.finish_success();
 
     Ok(())
 }
 
-fn build_apple_targets(config: &Config, release: bool) -> Result<()> {
+fn build_apple_targets(config: &Config, release: bool, step: &Step) -> Result<()> {
+    let on_output: Option<OutputCallback> = if step.is_verbose() {
+        Some(Box::new(|line: &str| {
+            print_cargo_line(line);
+        }))
+    } else {
+        None
+    };
+
     let build_options = BuildOptions {
         release,
         package: Some(config.library_name().to_string()),
+        on_output,
     };
     let builder = Builder::new(config, build_options);
 
@@ -422,18 +417,45 @@ fn build_apple_targets(config: &Config, release: bool) -> Result<()> {
         return Ok(());
     }
 
-    let failed = failed_targets(&results)
-        .iter()
-        .map(|triple| triple.to_string())
-        .collect::<Vec<_>>();
-
+    let failed = failed_targets(&results);
     Err(CliError::BuildFailed { targets: failed })
 }
 
-fn build_android_targets(config: &Config, release: bool) -> Result<()> {
+fn print_cargo_line(line: &str) {
+    use console::style;
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with("Fresh") {
+        return;
+    }
+
+    if trimmed.starts_with("Compiling") {
+        println!("      {}", style(trimmed).green());
+    } else if trimmed.starts_with("Finished") {
+        println!("      {}", style(trimmed).green().bold());
+    } else if trimmed.starts_with("warning:") {
+        println!("      {}", style(trimmed).yellow());
+    } else if trimmed.starts_with("error") {
+        println!("      {}", style(trimmed).red().bold());
+    } else if trimmed.starts_with("Checking") {
+        println!("      {}", style(trimmed).green());
+    } else if trimmed.starts_with("Building") {
+        println!("      {}", style(trimmed).cyan());
+    } else {
+        println!("      {}", style(trimmed).dim());
+    }
+}
+
+fn build_android_targets(config: &Config, release: bool, step: &Step) -> Result<()> {
+    let on_output: Option<OutputCallback> = if step.is_verbose() {
+        Some(Box::new(|line: &str| print_cargo_line(line)))
+    } else {
+        None
+    };
+
     let build_options = BuildOptions {
         release,
         package: Some(config.library_name().to_string()),
+        on_output,
     };
     let builder = Builder::new(config, build_options);
     let results = builder.build_android()?;
@@ -442,18 +464,21 @@ fn build_android_targets(config: &Config, release: bool) -> Result<()> {
         return Ok(());
     }
 
-    let failed = failed_targets(&results)
-        .iter()
-        .map(|triple| triple.to_string())
-        .collect::<Vec<_>>();
-
+    let failed = failed_targets(&results);
     Err(CliError::BuildFailed { targets: failed })
 }
 
-fn build_wasm_target(config: &Config, profile: WasmProfile) -> Result<()> {
+fn build_wasm_target(config: &Config, profile: WasmProfile, step: &Step) -> Result<()> {
+    let on_output: Option<OutputCallback> = if step.is_verbose() {
+        Some(Box::new(|line: &str| print_cargo_line(line)))
+    } else {
+        None
+    };
+
     let build_options = BuildOptions {
         release: matches!(profile, WasmProfile::Release),
         package: Some(config.library_name().to_string()),
+        on_output,
     };
     let builder = Builder::new(config, build_options);
     let results = builder.build_wasm_with_triple(config.wasm_triple())?;
@@ -462,11 +487,7 @@ fn build_wasm_target(config: &Config, profile: WasmProfile) -> Result<()> {
         return Ok(());
     }
 
-    let failed = failed_targets(&results)
-        .iter()
-        .map(|triple| triple.to_string())
-        .collect::<Vec<_>>();
-
+    let failed = failed_targets(&results);
     Err(CliError::BuildFailed { targets: failed })
 }
 
@@ -807,12 +828,4 @@ fn detect_version() -> Option<String> {
                         .map(|s| s.trim().trim_matches('"').to_string())
                 })
         })
-}
-
-fn run_step<T>(label: &str, action: impl FnOnce() -> Result<T>) -> Result<T> {
-    print!("{}... ", label);
-    io::stdout().flush().ok();
-    action().inspect(|_value| {
-        println!("✓");
-    })
 }
