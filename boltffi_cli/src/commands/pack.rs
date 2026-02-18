@@ -57,6 +57,8 @@ pub fn run_pack(config: &Config, command: PackCommand) -> Result<()> {
 }
 
 fn pack_all(config: &Config, options: PackAllOptions) -> Result<()> {
+    let mut packed_any = false;
+
     if config.is_apple_enabled() {
         pack_apple(
             config,
@@ -70,6 +72,7 @@ fn pack_all(config: &Config, options: PackAllOptions) -> Result<()> {
                 layout: None,
             },
         )?;
+        packed_any = true;
     }
 
     if config.is_android_enabled() {
@@ -81,6 +84,7 @@ fn pack_all(config: &Config, options: PackAllOptions) -> Result<()> {
                 no_build: options.no_build,
             },
         )?;
+        packed_any = true;
     }
 
     if config.is_wasm_enabled() {
@@ -92,6 +96,11 @@ fn pack_all(config: &Config, options: PackAllOptions) -> Result<()> {
                 no_build: options.no_build,
             },
         )?;
+        packed_any = true;
+    }
+
+    if !packed_any {
+        println!("warning: no targets enabled in boltffi.toml");
     }
 
     Ok(())
