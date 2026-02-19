@@ -2,6 +2,8 @@
 #![allow(clippy::unused_unit)]
 #![allow(clippy::too_many_arguments)]
 
+use std::sync::Mutex;
+
 use boltffi::*;
 
 #[data]
@@ -590,8 +592,6 @@ impl TestCounter {
         self.value
     }
 }
-
-use std::sync::Mutex;
 
 pub struct ThreadSafeCounter {
     value: Mutex<i32>,

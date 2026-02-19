@@ -84,7 +84,7 @@ mod async_ref_self_methods {
         let handle = unsafe { boltffi_test_counter_new(42) };
         let future = unsafe { boltffi_test_counter_async_get(handle) };
         assert!(!future.is_null());
-        boltffi_test_counter_async_get_free(future);
+        unsafe { boltffi_test_counter_async_get_free(future) };
         unsafe { boltffi_test_counter_free(handle) };
     }
 
@@ -99,7 +99,7 @@ mod async_ref_self_methods {
         let result: Option<i32> = unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some(42));
 
-        boltffi_test_counter_async_get_free(future);
+        unsafe { boltffi_test_counter_async_get_free(future) };
         unsafe { boltffi_test_counter_free(handle) };
     }
 }
@@ -112,7 +112,7 @@ mod async_ref_mut_self_methods {
         let handle = unsafe { boltffi_test_counter_new(10) };
         let future = unsafe { boltffi_test_counter_async_add(handle, 5) };
         assert!(!future.is_null());
-        boltffi_test_counter_async_add_free(future);
+        unsafe { boltffi_test_counter_async_add_free(future) };
         unsafe { boltffi_test_counter_free(handle) };
     }
 
@@ -127,7 +127,7 @@ mod async_ref_mut_self_methods {
         let result: Option<i32> = unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some(17));
 
-        boltffi_test_counter_async_add_free(future);
+        unsafe { boltffi_test_counter_async_add_free(future) };
 
         let current = unsafe { boltffi_test_counter_get(handle) };
         assert_eq!(current, 17);
@@ -145,13 +145,13 @@ mod async_ref_mut_self_methods {
         unsafe { rustfuture::rust_future_poll::<i32>(f1, noop, 0) };
         let r1: Option<i32> = unsafe { rustfuture::rust_future_complete(f1) };
         assert_eq!(r1, Some(10));
-        boltffi_test_counter_async_add_free(f1);
+        unsafe { boltffi_test_counter_async_add_free(f1) };
 
         let f2 = unsafe { boltffi_test_counter_async_add(handle, 20) };
         unsafe { rustfuture::rust_future_poll::<i32>(f2, noop, 0) };
         let r2: Option<i32> = unsafe { rustfuture::rust_future_complete(f2) };
         assert_eq!(r2, Some(30));
-        boltffi_test_counter_async_add_free(f2);
+        unsafe { boltffi_test_counter_async_add_free(f2) };
 
         let final_value = unsafe { boltffi_test_counter_get(handle) };
         assert_eq!(final_value, 30);
@@ -345,7 +345,7 @@ mod fixture_async_ref_self {
         let handle = unsafe { boltffi_class_test_fixture_new_with_id(123) };
         let future = unsafe { boltffi_class_test_fixture_async_get_id(handle) };
         assert!(!future.is_null());
-        boltffi_class_test_fixture_async_get_id_free(future);
+        unsafe { boltffi_class_test_fixture_async_get_id_free(future) };
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
@@ -360,7 +360,7 @@ mod fixture_async_ref_self {
         let result: Option<i32> = unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some(123));
 
-        boltffi_class_test_fixture_async_get_id_free(future);
+        unsafe { boltffi_class_test_fixture_async_get_id_free(future) };
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
@@ -378,7 +378,7 @@ mod fixture_async_ref_self {
         let result: Option<i32> = unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some(20));
 
-        boltffi_class_test_fixture_async_compute_sum_free(future);
+        unsafe { boltffi_class_test_fixture_async_compute_sum_free(future) };
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 }
@@ -394,7 +394,7 @@ mod fixture_async_ref_mut_self {
         extern "C" fn noop(_: u64, _: RustFuturePoll) {}
         unsafe { rustfuture::rust_future_poll::<()>(future, noop, 0) };
         let _: Option<()> = unsafe { rustfuture::rust_future_complete(future) };
-        boltffi_class_test_fixture_async_set_id_free(future);
+        unsafe { boltffi_class_test_fixture_async_set_id_free(future) };
 
         assert_eq!(unsafe { boltffi_class_test_fixture_get_id(handle) }, 999);
         unsafe { boltffi_class_test_fixture_free(handle) };
@@ -410,13 +410,13 @@ mod fixture_async_ref_mut_self {
         unsafe { rustfuture::rust_future_poll::<i32>(f1, noop, 0) };
         let r1: Option<i32> = unsafe { rustfuture::rust_future_complete(f1) };
         assert_eq!(r1, Some(1));
-        boltffi_class_test_fixture_async_add_value_free(f1);
+        unsafe { boltffi_class_test_fixture_async_add_value_free(f1) };
 
         let f2 = unsafe { boltffi_class_test_fixture_async_add_value(handle, 20) };
         unsafe { rustfuture::rust_future_poll::<i32>(f2, noop, 0) };
         let r2: Option<i32> = unsafe { rustfuture::rust_future_complete(f2) };
         assert_eq!(r2, Some(2));
-        boltffi_class_test_fixture_async_add_value_free(f2);
+        unsafe { boltffi_class_test_fixture_async_add_value_free(f2) };
 
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
@@ -431,7 +431,7 @@ mod fixture_async_ref_mut_self {
             let future = unsafe { boltffi_class_test_fixture_async_add_value(handle, i * 10) };
             unsafe { rustfuture::rust_future_poll::<i32>(future, noop, 0) };
             let _: Option<i32> = unsafe { rustfuture::rust_future_complete(future) };
-            boltffi_class_test_fixture_async_add_value_free(future);
+            unsafe { boltffi_class_test_fixture_async_add_value_free(future) };
         }
 
         assert_eq!(
@@ -1004,7 +1004,7 @@ mod fixture_wire_encoded_async {
         let result: Option<String> = unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some("async_test".to_string()));
 
-        boltffi_class_test_fixture_async_get_name_free(future);
+        unsafe { boltffi_class_test_fixture_async_get_name_free(future) };
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
@@ -1018,7 +1018,7 @@ mod fixture_wire_encoded_async {
         extern "C" fn noop(_: u64, _: RustFuturePoll) {}
         unsafe { rustfuture::rust_future_poll::<()>(future, noop, 0) };
         let _: Option<()> = unsafe { rustfuture::rust_future_complete(future) };
-        boltffi_class_test_fixture_async_set_name_free(future);
+        unsafe { boltffi_class_test_fixture_async_set_name_free(future) };
 
         let buf = unsafe { boltffi_class_test_fixture_get_name(handle) };
         let result: String = decode_buf(&buf);
@@ -1040,7 +1040,7 @@ mod fixture_wire_encoded_async {
         let result: Option<Option<i32>> = unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some(Some(1)));
 
-        boltffi_class_test_fixture_async_find_free(future);
+        unsafe { boltffi_class_test_fixture_async_find_free(future) };
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
@@ -1056,7 +1056,7 @@ mod fixture_wire_encoded_async {
         let result: Option<Option<i32>> = unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some(None));
 
-        boltffi_class_test_fixture_async_find_free(future);
+        unsafe { boltffi_class_test_fixture_async_find_free(future) };
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
@@ -1073,7 +1073,7 @@ mod fixture_wire_encoded_async {
             unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some(Ok(77)));
 
-        boltffi_class_test_fixture_async_try_get_free(future);
+        unsafe { boltffi_class_test_fixture_async_try_get_free(future) };
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
@@ -1089,7 +1089,7 @@ mod fixture_wire_encoded_async {
             unsafe { rustfuture::rust_future_complete(future) };
         assert!(matches!(result, Some(Err(_))));
 
-        boltffi_class_test_fixture_async_try_get_free(future);
+        unsafe { boltffi_class_test_fixture_async_try_get_free(future) };
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 }
@@ -1207,7 +1207,7 @@ mod cancellable_task_ffi {
         unsafe { rustfuture::rust_future_poll::<i32>(future, noop, 0) };
         let result: Option<i32> = unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some(99));
-        boltffi_cancellable_task_instant_task_free(future);
+        unsafe { boltffi_cancellable_task_instant_task_free(future) };
 
         assert!(unsafe { boltffi_cancellable_task_was_started(handle) });
         assert!(unsafe { boltffi_cancellable_task_was_completed(handle) });
@@ -1268,6 +1268,21 @@ mod thread_safe_counter_ffi {
     use super::*;
     use std::thread;
 
+    struct SendPtr<T>(*mut T);
+    impl<T> Clone for SendPtr<T> {
+        fn clone(&self) -> Self {
+            SendPtr(self.0)
+        }
+    }
+    impl<T> Copy for SendPtr<T> {}
+    unsafe impl<T> Send for SendPtr<T> {}
+    unsafe impl<T> Sync for SendPtr<T> {}
+    impl<T> SendPtr<T> {
+        fn get(self) -> *mut T {
+            self.0
+        }
+    }
+
     #[test]
     fn new_returns_valid_handle() {
         let handle = unsafe { boltffi_thread_safe_counter_new(0) };
@@ -1310,14 +1325,13 @@ mod thread_safe_counter_ffi {
     #[test]
     fn concurrent_increments_are_safe() {
         let handle = unsafe { boltffi_thread_safe_counter_new(0) };
-        let handle_ptr = handle as usize;
+        let handle_ptr = SendPtr(handle);
 
         let threads: Vec<_> = (0..10)
             .map(|_| {
                 thread::spawn(move || {
-                    let h = handle_ptr as *mut ThreadSafeCounter;
                     for _ in 0..1000 {
-                        unsafe { boltffi_thread_safe_counter_increment(h) };
+                        unsafe { boltffi_thread_safe_counter_increment(handle_ptr.get()) };
                     }
                 })
             })
@@ -1335,14 +1349,13 @@ mod thread_safe_counter_ffi {
     #[test]
     fn concurrent_adds_are_safe() {
         let handle = unsafe { boltffi_thread_safe_counter_new(0) };
-        let handle_ptr = handle as usize;
+        let handle_ptr = SendPtr(handle);
 
         let threads: Vec<_> = (0..4)
             .map(|i| {
                 thread::spawn(move || {
-                    let h = handle_ptr as *mut ThreadSafeCounter;
                     for _ in 0..250 {
-                        unsafe { boltffi_thread_safe_counter_add(h, (i + 1) as i32) };
+                        unsafe { boltffi_thread_safe_counter_add(handle_ptr.get(), (i + 1) as i32) };
                     }
                 })
             })
@@ -1360,14 +1373,13 @@ mod thread_safe_counter_ffi {
     #[test]
     fn concurrent_reads_and_writes_are_safe() {
         let handle = unsafe { boltffi_thread_safe_counter_new(0) };
-        let handle_ptr = handle as usize;
+        let handle_ptr = SendPtr(handle);
 
         let writers: Vec<_> = (0..4)
             .map(|_| {
                 thread::spawn(move || {
-                    let h = handle_ptr as *mut ThreadSafeCounter;
                     for _ in 0..500 {
-                        unsafe { boltffi_thread_safe_counter_increment(h) };
+                        unsafe { boltffi_thread_safe_counter_increment(handle_ptr.get()) };
                     }
                 })
             })
@@ -1376,10 +1388,9 @@ mod thread_safe_counter_ffi {
         let readers: Vec<_> = (0..4)
             .map(|_| {
                 thread::spawn(move || {
-                    let h = handle_ptr as *mut ThreadSafeCounter;
                     let mut last = 0;
                     for _ in 0..500 {
-                        let current = unsafe { boltffi_thread_safe_counter_get(h) };
+                        let current = unsafe { boltffi_thread_safe_counter_get(handle_ptr.get()) };
                         assert!(current >= last);
                         last = current;
                     }

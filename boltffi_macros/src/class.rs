@@ -13,6 +13,7 @@ fn has_mut_self_methods(input: &syn::ItemImpl) -> bool {
     input.items.iter().any(|item| {
         if let syn::ImplItem::Fn(method) = item
             && matches!(method.vis, syn::Visibility::Public(_))
+            && !method.attrs.iter().any(|a| a.path().is_ident("skip"))
             && let Some(FnArg::Receiver(r)) = method.sig.inputs.first()
         {
             return r.mutability.is_some();
@@ -21,10 +22,20 @@ fn has_mut_self_methods(input: &syn::ItemImpl) -> bool {
     })
 }
 
+fn parse_single_threaded_attr(attr: &TokenStream) -> bool {
+    use syn::parse::Parser;
+    let parser = syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated;
+    parser
+        .parse(attr.clone())
+        .map(|args| {
+            args.iter()
+                .any(|id| id == "single_threaded" || id == "thread_unsafe")
+        })
+        .unwrap_or(false)
+}
+
 pub fn ffi_class_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let attr_str = attr.to_string();
-    let single_threaded =
-        attr_str.contains("single_threaded") || attr_str.contains("thread_unsafe");
+    let single_threaded = parse_single_threaded_attr(&attr);
     let input = syn::parse_macro_input!(item as syn::ItemImpl);
 
     if has_mut_self_methods(&input) && !single_threaded {
@@ -33,7 +44,7 @@ pub fn ffi_class_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             "BoltFFI: `&mut self` methods are not thread-safe in FFI contexts\n\n\
              Two threads calling `&mut self` on the same instance = undefined behavior.\n\n\
              Options:\n\
-             1. Use `&self` with interior mutability (Mutex, RefCell, etc.) [recommended]\n\
+             1. Use `&self` with interior mutability (Mutex, RwLock, atomics) [recommended]\n\
              2. Add #[export(single_threaded)] ONLY if you enforce thread safety in the target \
                 language and want to avoid synchronization overhead you don't need",
         )
@@ -874,22 +885,22 @@ fn generate_async_method_export(
     let native_poll_fn = quote! {
         #[cfg(not(target_arch = "wasm32"))]
         #[unsafe(no_mangle)]
-        pub extern "C" fn #poll_ident(
+        pub unsafe extern "C" fn #poll_ident(
             handle: ::boltffi::__private::RustFutureHandle,
             callback_data: u64,
             callback: ::boltffi::__private::RustFutureContinuationCallback,
         ) {
-            unsafe { ::boltffi::__private::rustfuture::rust_future_poll::<#rust_return_type>(handle, callback, callback_data) }
+            ::boltffi::__private::rustfuture::rust_future_poll::<#rust_return_type>(handle, callback, callback_data)
         }
     };
 
     let wasm_poll_fn = quote! {
         #[cfg(target_arch = "wasm32")]
         #[unsafe(no_mangle)]
-        pub extern "C" fn #poll_sync_ident(
+        pub unsafe extern "C" fn #poll_sync_ident(
             handle: ::boltffi::__private::RustFutureHandle,
         ) -> i32 {
-            unsafe { ::boltffi::__private::rust_future_poll_sync::<#rust_return_type>(handle) }
+            ::boltffi::__private::rust_future_poll_sync::<#rust_return_type>(handle)
         }
     };
 
@@ -917,13 +928,13 @@ fn generate_async_method_export(
         #wasm_complete_fn
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn #cancel_ident(handle: ::boltffi::__private::RustFutureHandle) {
-            unsafe { ::boltffi::__private::rustfuture::rust_future_cancel::<#rust_return_type>(handle) }
+        pub unsafe extern "C" fn #cancel_ident(handle: ::boltffi::__private::RustFutureHandle) {
+            ::boltffi::__private::rustfuture::rust_future_cancel::<#rust_return_type>(handle)
         }
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn #free_ident(handle: ::boltffi::__private::RustFutureHandle) {
-            unsafe { ::boltffi::__private::rustfuture::rust_future_free::<#rust_return_type>(handle) }
+        pub unsafe extern "C" fn #free_ident(handle: ::boltffi::__private::RustFutureHandle) {
+            ::boltffi::__private::rustfuture::rust_future_free::<#rust_return_type>(handle)
         }
     })
 }
@@ -1283,5 +1294,18 @@ mod tests {
             "#,
         );
         assert!(has_mut_self_methods(&impl_block));
+    }
+
+    #[test]
+    fn has_mut_self_methods_ignores_skipped() {
+        let impl_block = parse_impl(
+            r#"
+            impl Counter {
+                #[skip]
+                pub fn internal_mut(&mut self) { self.value += 1; }
+            }
+            "#,
+        );
+        assert!(!has_mut_self_methods(&impl_block));
     }
 }

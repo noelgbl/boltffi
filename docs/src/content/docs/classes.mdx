@@ -597,7 +597,7 @@ BoltFFI requires exported classes to be `Send + Sync` by default. This is a comp
 
 If your struct contains types that aren't thread-safe (like `RefCell`, `Rc`, or raw pointers), you have two options:
 
-1. Make it thread-safe using `Mutex`, `RwLock`, `Arc`, or other synchronization primitives.
+1. Make it thread-safe using synchronization primitives like `Mutex`, `RwLock`, or atomics. For shared ownership across threads, combine with `Arc` (e.g., `Arc<Mutex<T>>`).
 
 2. Add `#[export(single_threaded)]`. This disables the `Send + Sync` check, but you're responsible for ensuring the class is only used from a single thread.
 

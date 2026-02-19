@@ -463,6 +463,7 @@ pub fn inc_u64(value: &mut [u64]) {
 }
 
 /// Thread-safe 64-bit counter using Mutex (comparable to UniFFI).
+#[derive(Default)]
 pub struct Counter {
     value: std::sync::Mutex<u64>,
 }
@@ -633,6 +634,7 @@ impl DataStore {
 }
 
 /// Thread-safe signed 64-bit accumulator using Mutex (comparable to UniFFI).
+#[derive(Default)]
 pub struct Accumulator {
     value: std::sync::Mutex<i64>,
 }
