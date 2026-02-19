@@ -1271,7 +1271,7 @@ mod thread_safe_counter_ffi {
     struct SendPtr<T>(*mut T);
     impl<T> Clone for SendPtr<T> {
         fn clone(&self) -> Self {
-            SendPtr(self.0)
+            *self
         }
     }
     impl<T> Copy for SendPtr<T> {}
@@ -1355,7 +1355,7 @@ mod thread_safe_counter_ffi {
             .map(|i| {
                 thread::spawn(move || {
                     for _ in 0..250 {
-                        unsafe { boltffi_thread_safe_counter_add(handle_ptr.get(), (i + 1) as i32) };
+                        unsafe { boltffi_thread_safe_counter_add(handle_ptr.get(), i + 1) };
                     }
                 })
             })
