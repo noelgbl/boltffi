@@ -129,12 +129,13 @@ jobs:
           workspaces: |
             .
             benchmarks/rust-boltffi
-      - if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y binaryen
-      - if: matrix.os == 'macos-latest'
-        run: brew install binaryen
-      - if: matrix.os == 'windows-latest'
-        run: choco install binaryen -y
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install -g typescript
+      - uses: Aandreba/setup-binaryen@v1.0.0
+        with:
+          token: ${{ github.token }}
       - run: cargo install --path ../../boltffi_cli
       - if: matrix.os == 'macos-latest'
         run: boltffi check --fix
