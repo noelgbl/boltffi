@@ -80,19 +80,6 @@ internal class BoltFFIHandleMap<T: Any> {
 
 private val boltffiContinuationMap = BoltFFIHandleMap<CancellableContinuation<Byte>>()
 
-internal fun boltffiFutureContinuationCallback(handle: Long, pollResult: Byte) {
-    val continuation = boltffiContinuationMap.tryRemove(handle)
-    if (continuation == null) {
-        System.err.println("BoltFFI: boltffiFutureContinuationCallback: handle $handle not found (already completed or cancelled)")
-        return
-    }
-    try {
-        continuation.resume(pollResult)
-    } catch (e: Exception) {
-        System.err.println("BoltFFI: boltffiFutureContinuationCallback: resume failed for handle $handle: $e")
-    }
-}
-
 internal suspend inline fun <T> boltffiCallAsync(
     crossinline createFuture: () -> Long,
     crossinline poll: (Long, Long) -> Unit,

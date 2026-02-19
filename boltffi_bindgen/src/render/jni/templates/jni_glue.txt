@@ -32,7 +32,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK) {
         return JNI_ERR;
     }
-    jclass local_class = (*env)->FindClass(env, "{{ package_path }}/{{ class_name }}Kt");
+    jclass local_class = (*env)->FindClass(env, "{{ package_path }}/Native");
     if (local_class == NULL) {
         return JNI_ERR;
     }

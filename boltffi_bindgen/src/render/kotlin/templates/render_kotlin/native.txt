@@ -16,6 +16,20 @@ private object Native {
 
     @JvmStatic external fun {{ prefix }}_free_string(ptr: Long)
     @JvmStatic external fun {{ prefix }}_last_error_message(): String
+
+    @JvmName("boltffiFutureContinuationCallback")
+    @JvmStatic internal fun boltffiFutureContinuationCallback(handle: Long, pollResult: Byte) {
+        val continuation = boltffiContinuationMap.tryRemove(handle)
+        if (continuation == null) {
+            System.err.println("BoltFFI: boltffiFutureContinuationCallback: handle $handle not found (already completed or cancelled)")
+            return
+        }
+        try {
+            continuation.resume(pollResult)
+        } catch (e: Exception) {
+            System.err.println("BoltFFI: boltffiFutureContinuationCallback: resume failed for handle $handle: $e")
+        }
+    }
 {%- for function in functions %}
 {%- if function.is_async() %}
     @JvmStatic external fun {{ function.ffi_name }}({% for param in function.params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): Long
