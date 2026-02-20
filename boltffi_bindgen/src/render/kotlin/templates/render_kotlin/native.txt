@@ -17,8 +17,7 @@ private object Native {
     @JvmStatic external fun {{ prefix }}_free_string(ptr: Long)
     @JvmStatic external fun {{ prefix }}_last_error_message(): String
 
-    @JvmName("boltffiFutureContinuationCallback")
-    @JvmStatic internal fun boltffiFutureContinuationCallback(handle: Long, pollResult: Byte) {
+    @JvmStatic fun boltffiFutureContinuationCallback(handle: Long, pollResult: Byte) {
         val continuation = boltffiContinuationMap.tryRemove(handle)
         if (continuation == null) {
             System.err.println("BoltFFI: boltffiFutureContinuationCallback: handle $handle not found (already completed or cancelled)")
