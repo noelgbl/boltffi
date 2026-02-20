@@ -129,7 +129,7 @@ jobs:
           workspaces: |
             .
             benchmarks/rust-boltffi
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: '20'
       - run: npm install -g typescript
