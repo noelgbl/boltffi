@@ -24,6 +24,29 @@ Placeholder references like `{package.crate}` follow these fallback rules:
 
 ## Top-level
 
+### `experimental` (optional)
+
+List of experimental targets or features that are explicitly enabled.
+
+```toml
+experimental = ["java"]
+```
+
+```toml
+experimental = ["kotlin.kmp", "swift.actors"]
+```
+
+- Type: array of strings
+- Default: `[]`
+- Format: `"target"` or `"target.feature"`
+- CLI requires `--experimental` flag when using experimental targets/features
+
+Experimental targets:
+- `java`
+
+Experimental features:
+- `kotlin.kmp`
+
 ### `[package]` (required)
 
 - `name` (string): Logical name used for default module/class naming.
@@ -159,6 +182,35 @@ Uuid = { type = "java.util.UUID", conversion = "uuid_string" }
 
 - `output` (path, optional): Where `boltffi pack android` writes the `jniLibs/` folder.
   - Default: `{targets.android.output}/jniLibs`
+
+## Java
+
+### `[targets.java]` (optional, experimental)
+
+- `package` (string, optional): Java package for generated sources.
+  - Default: `com.example.{package.name}` (with `-` normalized to `_`)
+- `module_name` (string, optional): Java class name for the public API.
+  - Default: `PascalCase(package.name)`
+
+### `[targets.java.jvm]` (optional)
+
+Desktop JVM target configuration.
+
+- `enabled` (bool): Whether JVM target is active.
+  - Default: `false`
+- `output` (path): Output directory for Java sources and JNI glue.
+  - Default: `dist/java`
+
+### `[targets.java.android]` (optional)
+
+Android target configuration for Java (not Kotlin).
+
+- `enabled` (bool): Whether Android Java target is active.
+  - Default: `false`
+- `output` (path): Output directory for Java sources.
+  - Default: `dist/java/android`
+- `min_sdk` (integer): Android minSdkVersion.
+  - Default: `24`
 
 ## WASM
 

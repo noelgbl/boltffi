@@ -1,3 +1,5 @@
+experimental = ["java"]
+
 [package]
 name = "bench_boltffi"
 
@@ -46,3 +48,11 @@ enabled = true
 [targets.wasm.npm]
 package_name = "@boltffi/bench"
 targets = ["nodejs"]
+
+[targets.java]
+package = "com.example.bench_boltffi"
+module_name = "BenchBoltFFI"
+
+[targets.java.jvm]
+enabled = true
+output = "dist/java"
