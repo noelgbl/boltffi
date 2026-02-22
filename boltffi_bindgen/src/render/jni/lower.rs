@@ -1610,28 +1610,20 @@ impl<'a> JniLowerer<'a> {
         let setup_lines = if is_async {
             vec![
                 format!("jobject {buf_name} = NULL;"),
-                format!(
-                    "if ({ptr_name} == NULL) {{ goto cleanup; }}"
-                ),
+                format!("if ({ptr_name} == NULL) {{ goto cleanup; }}"),
                 format!(
                     "{buf_name} = (*env)->NewDirectByteBuffer(env, (void*){ptr_name}, (jlong){len_name});"
                 ),
-                format!(
-                    "if ({buf_name} == NULL) {{ goto cleanup; }}"
-                ),
+                format!("if ({buf_name} == NULL) {{ goto cleanup; }}"),
             ]
         } else {
             vec![
                 format!("jobject {buf_name} = NULL;"),
-                format!(
-                    "if ({ptr_name} == NULL) {{ status->code = 1; goto cleanup; }}"
-                ),
+                format!("if ({ptr_name} == NULL) {{ status->code = 1; goto cleanup; }}"),
                 format!(
                     "{buf_name} = (*env)->NewDirectByteBuffer(env, (void*){ptr_name}, (jlong){len_name});"
                 ),
-                format!(
-                    "if ({buf_name} == NULL) {{ status->code = 1; goto cleanup; }}"
-                ),
+                format!("if ({buf_name} == NULL) {{ status->code = 1; goto cleanup; }}"),
             ]
         };
 
@@ -1717,28 +1709,20 @@ impl<'a> JniLowerer<'a> {
         let setup_lines = if is_async {
             vec![
                 format!("jobject {buf_name} = NULL;"),
-                format!(
-                    "if ({ptr_name} == NULL) {{ goto cleanup; }}"
-                ),
+                format!("if ({ptr_name} == NULL) {{ goto cleanup; }}"),
                 format!(
                     "{buf_name} = (*env)->NewDirectByteBuffer(env, (void*){ptr_name}, (jlong){len_name});"
                 ),
-                format!(
-                    "if ({buf_name} == NULL) {{ goto cleanup; }}"
-                ),
+                format!("if ({buf_name} == NULL) {{ goto cleanup; }}"),
             ]
         } else {
             vec![
                 format!("jobject {buf_name} = NULL;"),
-                format!(
-                    "if ({ptr_name} == NULL) {{ status->code = 1; goto cleanup; }}"
-                ),
+                format!("if ({ptr_name} == NULL) {{ status->code = 1; goto cleanup; }}"),
                 format!(
                     "{buf_name} = (*env)->NewDirectByteBuffer(env, (void*){ptr_name}, (jlong){len_name});"
                 ),
-                format!(
-                    "if ({buf_name} == NULL) {{ status->code = 1; goto cleanup; }}"
-                ),
+                format!("if ({buf_name} == NULL) {{ status->code = 1; goto cleanup; }}"),
             ]
         };
 

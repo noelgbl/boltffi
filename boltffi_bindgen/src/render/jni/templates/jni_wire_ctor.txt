@@ -1,7 +1,9 @@
 JNIEXPORT jlong JNICALL {{ jni_name }}(JNIEnv *env, jclass cls{{ jni_params }}) {
+    bool _boltffi_input_error = false;
 {%- for param in params %}
 {%- if param.is_string() %}
     const char* _{{ param.name }}_c = {{ param.name }} ? (*env)->GetStringUTFChars(env, {{ param.name }}, NULL) : NULL;
+    if ({{ param.name }} != NULL && _{{ param.name }}_c == NULL) _boltffi_input_error = true;
 {%- endif %}
 {%- if param.is_primitive_array() %}
     uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
@@ -15,15 +17,19 @@ JNIEXPORT jlong JNICALL {{ jni_name }}(JNIEnv *env, jclass cls{{ jni_params }}) 
 {%- endif %}
 
 {%- endfor %}
-    void* _handle = {{ ffi_name }}({% for param in params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+    void* _handle = NULL;
+    if (_boltffi_input_error) goto boltffi_input_cleanup;
+    _handle = {{ ffi_name }}({% for param in params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+boltffi_input_cleanup:
 {%- for param in params %}
 {%- if param.is_primitive_array() %}
     if (_{{ param.name }}_ptr != NULL) (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
 {%- endif %}
 {%- if param.is_string() %}
-    if (_{{ param.name }}_c) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
+    if (_{{ param.name }}_c != NULL) (*env)->ReleaseStringUTFChars(env, {{ param.name }}, _{{ param.name }}_c);
 {%- endif %}
 
 {%- endfor %}
+    if (_boltffi_input_error) return 0;
     return (jlong)_handle;
 }

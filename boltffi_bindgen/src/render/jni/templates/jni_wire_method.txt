@@ -8,9 +8,11 @@ JNIEXPORT {{ jni_return_type }} JNICALL {{ jni_name }}(JNIEnv *env, jclass cls{%
     if (handle == 0) return NULL;
 {%- endif %}
 {%- endif %}
+    bool _boltffi_input_error = false;
 {%- for param in params %}
 {%- if param.is_string() %}
     const char* _{{ param.name }}_c = {{ param.name }} ? (*env)->GetStringUTFChars(env, {{ param.name }}, NULL) : NULL;
+    if ({{ param.name }} != NULL && _{{ param.name }}_c == NULL) _boltffi_input_error = true;
 {%- endif %}
 {%- if param.is_primitive_array() %}
     uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
@@ -24,13 +26,20 @@ JNIEXPORT {{ jni_return_type }} JNICALL {{ jni_name }}(JNIEnv *env, jclass cls{%
 {%- endif %}
 
 {%- endfor %}
+{%- if return_is_direct %}
+    {{ jni_c_return_type }} _result = 0;
+{%- elif !return_is_unit %}
+    FfiBuf_u8 _buf = {0};
+{%- endif %}
+    if (_boltffi_input_error) goto boltffi_input_cleanup;
 {%- if return_is_unit %}
     {{ ffi_name }}({% if include_handle %}(void*)handle{% if params.len() > 0 %}, {% endif %}{% endif %}{% for param in params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
 {%- elif return_is_direct %}
-    {{ jni_c_return_type }} _result = {{ ffi_name }}({% if include_handle %}(void*)handle{% if params.len() > 0 %}, {% endif %}{% endif %}{% for param in params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+    _result = {{ ffi_name }}({% if include_handle %}(void*)handle{% if params.len() > 0 %}, {% endif %}{% endif %}{% for param in params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
 {%- else %}
-    FfiBuf_u8 _buf = {{ ffi_name }}({% if include_handle %}(void*)handle{% if params.len() > 0 %}, {% endif %}{% endif %}{% for param in params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
+    _buf = {{ ffi_name }}({% if include_handle %}(void*)handle{% if params.len() > 0 %}, {% endif %}{% endif %}{% for param in params %}{{ param.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %});
 {%- endif %}
+boltffi_input_cleanup:
 {%- for param in params %}
 {%- if param.is_primitive_array() %}
     if (_{{ param.name }}_ptr != NULL) (*env)->ReleasePrimitiveArrayCritical(env, {{ param.name }}, _{{ param.name }}_ptr, {{ param.array_release_mode() }});
@@ -40,9 +49,16 @@ JNIEXPORT {{ jni_return_type }} JNICALL {{ jni_name }}(JNIEnv *env, jclass cls{%
 {%- endif %}
 
 {%- endfor %}
+{%- if return_is_unit %}
+    if (_boltffi_input_error) return;
+{%- elif return_is_direct %}
+    if (_boltffi_input_error) return 0;
+{%- else %}
+    if (_boltffi_input_error) return NULL;
+{%- endif %}
 {%- if return_is_direct %}
     return {{ jni_result_cast }}_result;
 {%- elif !return_is_unit %}
-    return boltffi_buf_to_direct_bytebuffer(env, _buf);
+    return boltffi_buf_to_jbytearray(env, _buf);
 {%- endif %}
 }
