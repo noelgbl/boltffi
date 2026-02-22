@@ -1,0 +1,41 @@
+[package]
+name = "demo"
+
+[targets.apple]
+enabled = true
+
+[targets.apple.xcframework]
+output = "../platforms/apple/Demo.xcframework"
+
+[targets.apple.spm]
+output = "../platforms/apple"
+
+[targets.apple.swift]
+output = "../platforms/apple/Sources/Demo"
+
+[targets.android]
+enabled = true
+
+[targets.android.kotlin]
+output = "../platforms/android/src/main/kotlin"
+
+[targets.android.pack]
+output = "../platforms/android/src/main/jniLibs"
+
+[targets.wasm]
+enabled = true
+
+[targets.wasm.typescript]
+output = "../platforms/wasm/generated"
+
+[targets.wasm.npm]
+output = "../platforms/wasm/dist"
+package_name = "@boltffi/demo"
+targets = ["bundler", "web", "nodejs"]
+
+[targets.java]
+package = "com.boltffi.demo"
+
+[targets.java.jvm]
+enabled = true
+output = "../platforms/java/src/main/java"

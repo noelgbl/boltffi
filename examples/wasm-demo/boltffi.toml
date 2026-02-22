@@ -1,9 +1,0 @@
-[package]
-name = "wasm-demo"
-
-[targets.wasm.optimize]
-enabled = false
-
-[targets.wasm.npm]
-package_name = "@boltffi/wasm-demo"
-targets = ["bundler", "web", "nodejs"]

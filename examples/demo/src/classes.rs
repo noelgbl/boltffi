@@ -4,7 +4,7 @@ pub struct Counter {
     count: i32,
 }
 
-#[export]
+#[export(single_threaded)]
 impl Counter {
     pub fn new(initial: i32) -> Counter {
         Counter { count: initial }
