@@ -1,11 +1,18 @@
 use askama::Template;
 
-use super::plan::JavaModule;
+use super::plan::{JavaModule, JavaRecord};
 
 #[derive(Template)]
 #[template(path = "render_java/preamble.txt", escape = "none")]
 pub struct PreambleTemplate<'a> {
     pub module: &'a JavaModule,
+}
+
+#[derive(Template)]
+#[template(path = "render_java/record.txt", escape = "none")]
+pub struct RecordTemplate<'a> {
+    pub record: &'a JavaRecord,
+    pub package_name: &'a str,
 }
 
 #[derive(Template)]

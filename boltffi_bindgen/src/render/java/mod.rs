@@ -5,7 +5,7 @@ mod names;
 mod plan;
 mod templates;
 
-pub use emit::{JavaEmitter, JavaOutput};
+pub use emit::{JavaEmitter, JavaFile, JavaOutput};
 pub use lower::JavaLowerer;
 pub use names::NamingConvention;
 pub use plan::*;

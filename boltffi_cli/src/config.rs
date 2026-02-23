@@ -223,6 +223,7 @@ pub struct AndroidPackConfig {
 pub struct JavaConfig {
     pub package: Option<String>,
     pub module_name: Option<String>,
+    pub min_version: Option<u8>,
     #[serde(default)]
     pub jvm: JavaJvmConfig,
     #[serde(default)]
@@ -779,6 +780,10 @@ impl Config {
             .module_name
             .clone()
             .unwrap_or_else(|| to_pascal_case(&self.package.name))
+    }
+
+    pub fn java_min_version(&self) -> Option<u8> {
+        self.targets.java.min_version
     }
 
     pub fn java_jvm_output(&self) -> PathBuf {

@@ -280,7 +280,7 @@ fn generate_java(config: &Config, output: Option<PathBuf>) -> Result<()> {
 
     let java_options = render::java::JavaOptions {
         library_name: Some(crate_name.to_string()),
-        ..Default::default()
+        min_java_version: render::java::JavaVersion(config.java_min_version().unwrap_or(8)),
     };
 
     let java_output = render::java::JavaEmitter::emit(
@@ -291,11 +291,13 @@ fn generate_java(config: &Config, output: Option<PathBuf>) -> Result<()> {
         java_options,
     );
 
-    let java_path = java_dir.join(format!("{}.java", module_name));
-    std::fs::write(&java_path, &java_output.source).map_err(|source| CliError::WriteFailed {
-        path: java_path.clone(),
-        source,
-    })?;
+    for file in &java_output.files {
+        let java_path = java_dir.join(&file.file_name);
+        std::fs::write(&java_path, &file.source).map_err(|source| CliError::WriteFailed {
+            path: java_path.clone(),
+            source,
+        })?;
+    }
 
     let jni_module =
         render::jni::JniLowerer::new(&contract, &abi_contract, package_name, module_name).lower();

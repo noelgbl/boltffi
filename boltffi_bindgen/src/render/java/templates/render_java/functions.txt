@@ -3,6 +3,7 @@ public final class {{ module.class_name }} {
 {%- for func in module.functions %}
 
     public static {{ func.return_type }} {{ func.name }}({% for param in func.params %}{{ param.java_type }} {{ param.name }}{% if !loop.last %}, {% endif %}{% endfor %}) {
+{%- if func.wire_writers.is_empty() %}
 {%- if func.strategy.is_void() %}
         Native.{{ func.ffi_name }}({% for param in func.params %}{{ param.to_native_expr() }}{% if !loop.last %}, {% endif %}{% endfor %});
 {%- elif func.strategy.is_direct() %}
@@ -12,6 +13,27 @@ public final class {{ module.class_name }} {
         if (_buf == null) throw new RuntimeException("FFI call returned null buffer");
         WireReader reader = new WireReader(_buf);
         return {{ func.strategy.decode_expr() }};
+{%- endif %}
+{%- else %}
+        try (
+{%- for writer in func.wire_writers %}
+            WireWriter {{ writer.binding_name }} = new WireWriter({{ writer.size_expr }}){% if !loop.last %};{% endif %}
+{%- endfor %}
+        ) {
+{%- for writer in func.wire_writers %}
+            {{ writer.encode_expr }};
+{%- endfor %}
+{%- if func.strategy.is_void() %}
+            Native.{{ func.ffi_name }}({% for param in func.params %}{{ param.to_native_expr() }}{% if !loop.last %}, {% endif %}{% endfor %});
+{%- elif func.strategy.is_direct() %}
+            return Native.{{ func.ffi_name }}({% for param in func.params %}{{ param.to_native_expr() }}{% if !loop.last %}, {% endif %}{% endfor %});
+{%- elif func.strategy.is_wire() %}
+            byte[] _buf = Native.{{ func.ffi_name }}({% for param in func.params %}{{ param.to_native_expr() }}{% if !loop.last %}, {% endif %}{% endfor %});
+            if (_buf == null) throw new RuntimeException("FFI call returned null buffer");
+            WireReader reader = new WireReader(_buf);
+            return {{ func.strategy.decode_expr() }};
+{%- endif %}
+        }
 {%- endif %}
     }
 {%- endfor %}

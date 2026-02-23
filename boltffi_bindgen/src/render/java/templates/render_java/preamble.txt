@@ -4,6 +4,7 @@ package {{ module.package_name }};
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 
 final class WireReader {
     private final byte[] data;
@@ -58,10 +59,17 @@ final class WireReader {
         return Double.longBitsToDouble(readI64());
     }
 
+    private void requireAvailable(int len, String kind) {
+        if (len > data.length - pos) {
+            throw new RuntimeException("corrupt wire: truncated " + kind);
+        }
+    }
+
     String readString() {
         int len = readI32();
         if (len == 0) return "";
         if (len < 0) throw new RuntimeException("corrupt wire: negative string length");
+        requireAvailable(len, "string payload");
         String v = new String(data, pos, len, StandardCharsets.UTF_8);
         pos += len;
         return v;
@@ -71,10 +79,106 @@ final class WireReader {
         int len = readI32();
         if (len == 0) return new byte[0];
         if (len < 0) throw new RuntimeException("corrupt wire: negative bytes length");
+        requireAvailable(len, "bytes payload");
         byte[] v = new byte[len];
         System.arraycopy(data, pos, v, 0, len);
         pos += len;
         return v;
     }
 }
+{% if module.needs_wire_writer() %}
+final class WireWriter implements AutoCloseable {
+    private static final int MIN_CAPACITY = 16;
+    private static final int MAX_POOLED_BUFFERS_PER_THREAD = 8;
+    private static final int MAX_POOLED_CAPACITY = 1 << 20;
+    private static final ThreadLocal<ArrayDeque<ByteBuffer>> POOL =
+            ThreadLocal.withInitial(ArrayDeque::new);
 
+    private ByteBuffer buf;
+    private boolean closed;
+
+    WireWriter(int capacity) {
+        this.buf = takeBuffer(capacity);
+        this.closed = false;
+    }
+
+    ByteBuffer toBuffer() {
+        ByteBuffer view = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+        view.flip();
+        return view.slice().order(ByteOrder.LITTLE_ENDIAN);
+    }
+
+    private void ensureCapacity(int needed) {
+        if (buf.remaining() >= needed) return;
+        int next = Math.max(buf.capacity() * 2, buf.position() + needed);
+        ByteBuffer grown = allocateBuffer(next);
+        buf.flip();
+        grown.put(buf);
+        recycleBuffer(buf);
+        buf = grown;
+    }
+
+    void writeBool(boolean v) { ensureCapacity(1); buf.put((byte) (v ? 1 : 0)); }
+    void writeI8(byte v) { ensureCapacity(1); buf.put(v); }
+    void writeI16(short v) { ensureCapacity(2); buf.putShort(v); }
+    void writeI32(int v) { ensureCapacity(4); buf.putInt(v); }
+    void writeI64(long v) { ensureCapacity(8); buf.putLong(v); }
+    void writeF32(float v) { ensureCapacity(4); buf.putFloat(v); }
+    void writeF64(double v) { ensureCapacity(8); buf.putDouble(v); }
+
+    void writeString(String v) {
+        byte[] utf8 = v.getBytes(StandardCharsets.UTF_8);
+        writeI32(utf8.length);
+        ensureCapacity(utf8.length);
+        buf.put(utf8);
+    }
+
+    void writeBytes(byte[] v) {
+        writeI32(v.length);
+        ensureCapacity(v.length);
+        buf.put(v);
+    }
+
+    static int stringWireSize(String v) {
+        return 4 + v.getBytes(StandardCharsets.UTF_8).length;
+    }
+
+    @Override
+    public void close() {
+        if (closed) return;
+        closed = true;
+        recycleBuffer(buf);
+        buf = null;
+    }
+
+    private static ByteBuffer takeBuffer(int requestedCapacity) {
+        int requiredCapacity = Math.max(requestedCapacity, MIN_CAPACITY);
+        ArrayDeque<ByteBuffer> pool = POOL.get();
+        int remaining = pool.size();
+        while (remaining-- > 0) {
+            ByteBuffer candidate = pool.pollFirst();
+            if (candidate.capacity() >= requiredCapacity) {
+                candidate.clear();
+                candidate.order(ByteOrder.LITTLE_ENDIAN);
+                return candidate;
+            }
+            pool.offerLast(candidate);
+        }
+        return allocateBuffer(requiredCapacity);
+    }
+
+    private static ByteBuffer allocateBuffer(int capacity) {
+        return ByteBuffer.allocateDirect(capacity).order(ByteOrder.LITTLE_ENDIAN);
+    }
+
+    private static void recycleBuffer(ByteBuffer buffer) {
+        if (buffer == null) return;
+        if (buffer.capacity() > MAX_POOLED_CAPACITY) return;
+        ArrayDeque<ByteBuffer> pool = POOL.get();
+        if (pool.size() >= MAX_POOLED_BUFFERS_PER_THREAD) return;
+        buffer.clear();
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
+        pool.offerFirst(buffer);
+    }
+}
+{% endif %}
