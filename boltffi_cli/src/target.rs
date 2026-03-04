@@ -87,7 +87,7 @@ impl RustTarget {
     };
 
     pub const ALL_IOS: &'static [Self] =
-        &[Self::IOS_ARM64];
+        &[];
 
     pub const ALL_MACOS: &'static [Self] = &[Self::MACOS_ARM64];
 
